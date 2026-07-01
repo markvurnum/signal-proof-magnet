@@ -9,10 +9,10 @@
  * Minting is free: the paid Findymail/Sonnet build only runs when a prospect
  * actually opens their link.
  *
- * Usage:
+ * CLI:
  *   node build-links.js leads.csv                 -> writes leads-with-links.csv
  *   node build-links.js leads.csv out.csv         -> custom output name
- *   MAGNET_BASE_URL=https://signals.prospectmachine.co node build-links.js leads.csv
+ * Or use the upload page:  node link-uploader.js  (http://localhost:4060)
  *
  * - Column names are matched flexibly (First Name / firstname / fname all work).
  * - Tokens are DETERMINISTIC from the email, so re-running the same list reuses
@@ -37,12 +37,7 @@ const { URL } = require('url');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const BASE_URL = (process.env.MAGNET_BASE_URL || 'https://signals.prospectmachine.co').replace(/\/+$/, '');
-
-const inFile = process.argv[2];
-if (!inFile) { console.error('\n  Usage: node build-links.js <leads.csv> [out.csv]\n'); process.exit(1); }
-if (!SUPABASE_URL || !SUPABASE_KEY) { console.error('\n  Missing Supabase creds in the twin .env.\n'); process.exit(1); }
-const outFile = process.argv[3] || inFile.replace(/\.csv$/i, '') + '-with-links.csv';
+const DEFAULT_BASE = (process.env.MAGNET_BASE_URL || 'https://signals.prospectmachine.co').replace(/\/+$/, '');
 
 // ── minimal CSV parse/stringify (handles quoted fields, commas, CRLF) ──
 function parseCSV(text) {
@@ -70,42 +65,42 @@ function makePicker(header) {
   const map = {}; header.forEach((h, i) => (map[norm(h)] = i));
   return (row, aliases) => { for (const a of aliases) if (map[a] !== undefined && row[map[a]]) return row[map[a]].trim(); return ''; };
 }
-
 const titleize = (s) => s.replace(/[-_.]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 
-// ── read + transform ──
-const rows = parseCSV(fs.readFileSync(inFile, 'utf8'));
-if (rows.length < 2) { console.error('  CSV has no data rows.'); process.exit(1); }
-const header = rows[0];
-const pick = makePicker(header);
+// ── transform a CSV string -> { csv, records, minted, skipped } (no network) ──
+function transform(csvText, baseUrl = DEFAULT_BASE) {
+  const rows = parseCSV(csvText);
+  if (rows.length < 2) throw new Error('CSV has no data rows.');
+  const header = rows[0];
+  const pick = makePicker(header);
+  const records = [];
+  const outRows = [header.concat(['signal_link'])];
+  let minted = 0, skipped = 0;
 
-const records = [];      // for Supabase upsert
-const outRows = [header.concat(['signal_link'])];
-let withEmail = 0, skipped = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const email = pick(row, ['email', 'emailaddress', 'email1', 'workemail', 'emailaddress1']).toLowerCase();
+    if (!email) { outRows.push(row.concat([''])); skipped++; continue; }
 
-for (let r = 1; r < rows.length; r++) {
-  const row = rows[r];
-  const email = pick(row, ['email', 'emailaddress', 'email1', 'workemail', 'emailaddress1']).toLowerCase();
-  if (!email) { outRows.push(row.concat([''])); skipped++; continue; }
+    const first = pick(row, ['firstname', 'first', 'fname']) || pick(row, ['name', 'fullname']).split(/\s+/)[0] || '';
+    const last = pick(row, ['lastname', 'last', 'lname', 'surname']);
+    const domain = (pick(row, ['website', 'domain', 'companydomain', 'url', 'site']) || email.split('@')[1] || '')
+      .replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    let company = pick(row, ['company', 'companyname', 'organization', 'organisation', 'business', 'account']);
+    if (!company && domain) company = titleize(domain.split('.')[0]);
 
-  const first = pick(row, ['firstname', 'first', 'fname']) || pick(row, ['name', 'fullname']).split(/\s+/)[0] || '';
-  const last = pick(row, ['lastname', 'last', 'lname', 'surname']);
-  const domain = (pick(row, ['website', 'domain', 'companydomain', 'url', 'site']) || email.split('@')[1] || '')
-    .replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  let company = pick(row, ['company', 'companyname', 'organization', 'organisation', 'business', 'account']);
-  if (!company && domain) company = titleize(domain.split('.')[0]);
+    const hash = crypto.createHash('sha1').update(email).digest('hex').slice(0, 5);
+    const slugBase = (company ? company : domain.split('.')[0] || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const token = `${slugBase}-${hash}`;
 
-  // deterministic token from email -> same lead always maps to same link
-  const hash = crypto.createHash('sha1').update(email).digest('hex').slice(0, 5);
-  const slugBase = (company ? company : domain.split('.')[0] || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  const token = `${slugBase}-${hash}`;
-
-  records.push({ token, first_name: first, sender_name: [first, last].filter(Boolean).join(' ') || first, company, website: domain, email });
-  outRows.push(row.concat([`${BASE_URL}/s/${token}`]));
-  withEmail++;
+    records.push({ token, first_name: first, sender_name: [first, last].filter(Boolean).join(' ') || first, company, website: domain, email });
+    outRows.push(row.concat([`${baseUrl}/s/${token}`]));
+    minted++;
+  }
+  return { csv: outRows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n', records, minted, skipped };
 }
 
-// ── upsert to Supabase in chunks (idempotent on token PK) ──
+// ── upsert records to Supabase in chunks (idempotent on token PK) ──
 function upsertChunk(chunk) {
   return new Promise((resolve, reject) => {
     const u = new URL(SUPABASE_URL);
@@ -119,12 +114,29 @@ function upsertChunk(chunk) {
   });
 }
 
-(async () => {
-  try {
-    for (let i = 0; i < records.length; i += 500) await upsertChunk(records.slice(i, i + 500));
-    fs.writeFileSync(outFile, outRows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n');
-    console.log(`\n  ✓ ${withEmail} links minted${skipped ? ` (${skipped} rows skipped — no email)` : ''}`);
+// ── full pipeline: transform + write tokens to Supabase ──
+async function buildLinks(csvText, baseUrl = DEFAULT_BASE) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Missing Supabase creds in the twin .env.');
+  const out = transform(csvText, baseUrl);
+  for (let i = 0; i < out.records.length; i += 500) await upsertChunk(out.records.slice(i, i + 500));
+  return out;
+}
+
+module.exports = { buildLinks, transform, DEFAULT_BASE };
+
+// ── CLI ──
+if (require.main === module) {
+  const inFile = process.argv[2];
+  if (!inFile) { console.error('\n  Usage: node build-links.js <leads.csv> [out.csv]   (or: node link-uploader.js for the upload page)\n'); process.exit(1); }
+  const outFile = process.argv[3] || inFile.replace(/\.csv$/i, '') + '-with-links.csv';
+  buildLinks(fs.readFileSync(inFile, 'utf8')).then(({ csv, minted, skipped }) => {
+    fs.writeFileSync(outFile, csv);
+    console.log(`\n  ✓ ${minted} links minted${skipped ? ` (${skipped} rows skipped — no email)` : ''}`);
     console.log(`  ✓ wrote ${outFile}`);
     console.log(`\n  Upload that file to PlusVibe, then use {{signal_link}} in your reply template.\n`);
-  } catch (e) { console.error('\n  Supabase upsert failed:', e.message); if (/magnet_prospects.* does not exist/i.test(e.message)) console.error('  → run sql/magnet_prospects.sql first.'); process.exit(1); }
-})();
+  }).catch((e) => {
+    console.error('\n  Failed:', e.message);
+    if (/magnet_prospects.* does not exist/i.test(e.message)) console.error('  → run sql/magnet_prospects.sql first.');
+    process.exit(1);
+  });
+}
