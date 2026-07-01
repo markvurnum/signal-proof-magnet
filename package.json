@@ -1,0 +1,13 @@
+{
+  "name": "signal-proof-magnet",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Signal Proof — personalised reverse lead-magnet landing page (Prospect Machine)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

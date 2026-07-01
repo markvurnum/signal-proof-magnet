@@ -1,0 +1,9 @@
+{
+  "example-token": {
+    "first_name": "Sarah",
+    "sender_name": "Sarah Thompson",
+    "company": "Apex Sales Coaching",
+    "website": "apexsalescoaching.co.uk",
+    "email": "sarah@apexsalescoaching.co.uk"
+  }
+}

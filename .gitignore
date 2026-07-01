@@ -1,0 +1,18 @@
+# dependencies
+node_modules/
+
+# runtime data / PII — never commit
+prospects.json
+emails.json
+*.log
+magnet_out.html
+
+# secrets
+.env
+.env.*
+
+# os
+.DS_Store
+
+# dev backup
+assets/*_original_backup.*
