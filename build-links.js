@@ -24,6 +24,7 @@ const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
 const { URL } = require('url');
+const { SIGNALS } = require('./signals');
 
 // ── load twin .env (same creds the server uses) ──
 (function loadEnv() {
@@ -37,7 +38,7 @@ const { URL } = require('url');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const DEFAULT_BASE = (process.env.MAGNET_BASE_URL || 'https://signals.prospectmachine.co').replace(/\/+$/, '');
+const DEFAULT_BASE = (process.env.MAGNET_BASE_URL || 'https://signals.prospectconnect.io').replace(/\/+$/, '');
 
 // ── minimal CSV parse/stringify (handles quoted fields, commas, CRLF) ──
 function parseCSV(text) {
@@ -68,19 +69,28 @@ function makePicker(header) {
 const titleize = (s) => s.replace(/[-_.]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 
 // ── transform a CSV string -> { csv, records, minted, skipped } (no network) ──
-function transform(csvText, baseUrl = DEFAULT_BASE) {
+// opts.signal = which SIGNAL these prospects belong to (e.g. 'office-move').
+// opts.service = the default SERVICE (campaign) for the whole file; a per-row
+// `service` column overrides it. Both are validated against signals.js.
+function transform(csvText, baseUrl = DEFAULT_BASE, opts = {}) {
   const rows = parseCSV(csvText);
   if (rows.length < 2) throw new Error('CSV has no data rows.');
   const header = rows[0];
   const pick = makePicker(header);
+  const SIG = SIGNALS[opts.signal] || null;
+  const defService = opts.service || (SIG && SIG.defaultService) || '';
+  const validService = (s) => (SIG ? (SIG.services[s] ? s : defService) : (s || defService));
+  const hasServiceCol = header.some((h) => ['service', 'angle'].includes(norm(h)));
   const records = [];
-  const outRows = [header.concat(['signal_link'])];
+  const extraCols = hasServiceCol ? ['signal_link'] : ['service', 'signal_link'];
+  const outRows = [header.concat(extraCols)];
   let minted = 0, skipped = 0;
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     const email = pick(row, ['email', 'emailaddress', 'email1', 'workemail', 'emailaddress1']).toLowerCase();
-    if (!email) { outRows.push(row.concat([''])); skipped++; continue; }
+    const service = validService(pick(row, ['service', 'angle']) || defService);
+    if (!email) { outRows.push(row.concat(hasServiceCol ? [''] : [service, ''])); skipped++; continue; }
 
     const first = pick(row, ['firstname', 'first', 'fname']) || pick(row, ['name', 'fullname']).split(/\s+/)[0] || '';
     const last = pick(row, ['lastname', 'last', 'lname', 'surname']);
@@ -93,11 +103,15 @@ function transform(csvText, baseUrl = DEFAULT_BASE) {
     const slugBase = (company ? company : domain.split('.')[0] || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const token = `${slugBase}-${hash}`;
 
+    const qs = [];
+    if (opts.signal) qs.push('signal=' + encodeURIComponent(opts.signal));
+    if (service) qs.push('service=' + encodeURIComponent(service));
+    const link = `${baseUrl}/s/${token}${qs.length ? '?' + qs.join('&') : ''}`;
     records.push({ token, first_name: first, sender_name: [first, last].filter(Boolean).join(' ') || first, company, website: domain, email });
-    outRows.push(row.concat([`${baseUrl}/s/${token}`]));
+    outRows.push(row.concat(hasServiceCol ? [link] : [service, link]));
     minted++;
   }
-  return { csv: outRows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n', records, minted, skipped };
+  return { csv: outRows.map((r) => r.map(csvCell).join(',')).join('\n') + '\n', records, minted, skipped, service: defService };
 }
 
 // ── upsert records to Supabase in chunks (idempotent on token PK) ──
@@ -115,21 +129,23 @@ function upsertChunk(chunk) {
 }
 
 // ── full pipeline: transform + write tokens to Supabase ──
-async function buildLinks(csvText, baseUrl = DEFAULT_BASE) {
+async function buildLinks(csvText, opts = {}) {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Missing Supabase creds in the twin .env.');
-  const out = transform(csvText, baseUrl);
+  const out = transform(csvText, opts.baseUrl || DEFAULT_BASE, { signal: opts.signal, service: opts.service });
   for (let i = 0; i < out.records.length; i += 500) await upsertChunk(out.records.slice(i, i + 500));
   return out;
 }
 
-module.exports = { buildLinks, transform, DEFAULT_BASE };
+module.exports = { buildLinks, transform, DEFAULT_BASE, SIGNALS };
 
 // ── CLI ──
 if (require.main === module) {
-  const inFile = process.argv[2];
-  if (!inFile) { console.error('\n  Usage: node build-links.js <leads.csv> [out.csv]   (or: node link-uploader.js for the upload page)\n'); process.exit(1); }
-  const outFile = process.argv[3] || inFile.replace(/\.csv$/i, '') + '-with-links.csv';
-  buildLinks(fs.readFileSync(inFile, 'utf8')).then(({ csv, minted, skipped }) => {
+  const args = process.argv.slice(2);
+  const flag = (n) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : undefined; };
+  const inFile = args.find((a) => !a.startsWith('--') && a !== args[args.indexOf('--signal') + 1] && a !== args[args.indexOf('--service') + 1]);
+  if (!inFile) { console.error('\n  Usage: node build-links.js <leads.csv> [--signal office-move] [--service telecoms] [out.csv]\n'); process.exit(1); }
+  const outFile = args.filter((a) => !a.startsWith('--') && a !== inFile && a !== flag('signal') && a !== flag('service'))[0] || inFile.replace(/\.csv$/i, '') + '-with-links.csv';
+  buildLinks(fs.readFileSync(inFile, 'utf8'), { signal: flag('signal'), service: flag('service') }).then(({ csv, minted, skipped }) => {
     fs.writeFileSync(outFile, csv);
     console.log(`\n  ✓ ${minted} links minted${skipped ? ` (${skipped} rows skipped — no email)` : ''}`);
     console.log(`  ✓ wrote ${outFile}`);

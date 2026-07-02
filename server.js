@@ -15,8 +15,16 @@ const { URL } = require('url');
 
 const PORT = process.env.PORT || 4050;
 const MODEL = 'claude-haiku-4-5';
-const CLIENT_ID = process.env.NICHE_CLIENT_ID || '224bef46-a50f-43fd-b389-f7bb25e1eb7b'; // UK Hiring & Scaling Sales Teams
-const FRESH_DAYS = 14;
+// ── SIGNAL → SERVICES config: single source of truth in signals.js ──
+const { SIGNALS } = require("./signals");
+// Signal resolved PER REQUEST (from ?signal=, the token, or the Host subdomain)
+// so ONE deploy serves every shelf. Falls back to this default, which keeps the
+// live sales page working unchanged when no signal is specified.
+const DEFAULT_SIGNAL = SIGNALS[process.env.SIGNAL] ? process.env.SIGNAL : 'sales';
+const SUBDOMAIN_SIGNAL = { moved: 'office-moved', soon: 'office-moving-soon', signals: DEFAULT_SIGNAL };
+const sigCfg = (k) => SIGNALS[k] || SIGNALS[DEFAULT_SIGNAL];
+const resolveSignal = (k) => (SIGNALS[k] ? k : DEFAULT_SIGNAL);
+const resolveService = (sigKey, k) => { const s = sigCfg(sigKey); return k && s.services[k] ? k : s.defaultService; };
 const TOKEN_ONLY = process.env.TOKEN_ONLY === 'true'; // live URL: only known tokens run the paid build
 const BASE_URL = process.env.MAGNET_BASE_URL || `http://localhost:${PORT}`;
 
@@ -70,10 +78,10 @@ async function getProspect(token) {
   return PROSPECTS[token] || null;
 }
 
-async function supabaseSignals() {
+async function supabaseSignals(clientId) {
   const host = new URL(SUPABASE_URL).host;
   const cols = 'name,headline,company,location,post_text,post_url,posted_at,created_at,source,pain_type,linkedin_url,score,awareness_stage,image_url';
-  const p = `/rest/v1/signals?client_id=eq.${CLIENT_ID}&score=gte.70&select=${cols}&order=score.desc`;
+  const p = `/rest/v1/signals?client_id=eq.${clientId}&score=gte.70&select=${cols}&order=score.desc`;
   const out = await req({ host, path: p, method: 'GET', headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
   return JSON.parse(out);
 }
@@ -105,8 +113,8 @@ async function findymailLookup(linkedinUrl, name, company) {
 const UK_RE = /\bLondon\b|Manchester|Birmingham|Leeds|Bristol|Glasgow|Edinburgh|Cardiff|Liverpool|Sheffield|Nottingham|United Kingdom|\bU\.?K\.?\b|England|Scotland|Wales|Britain|\bGB\b/i;
 const isUK = (r) => UK_RE.test(`${r.location || ''} ${r.headline || ''} ${r.company || ''} ${r.post_text || ''}`);
 
-function selectCards(rows, limit = 3) {
-  const now = Date.now(), freshMs = FRESH_DAYS * 86400000;
+function selectCards(rows, limit = 3, freshDays = 14) {
+  const now = Date.now(), freshMs = freshDays * 86400000;
   let fresh = rows.filter((r) => new Date(r.posted_at || r.created_at).getTime() >= now - freshMs);
   if (process.env.UK_ONLY !== 'false') fresh = fresh.filter(isUK); // UK-based companies only
   // rank: score first, then named-company source (LinkedIn hires are the most showable), then recency
@@ -137,15 +145,17 @@ const stripDashes = (s = '') => String(s).replace(/\s*[—–]\s*/g, ', ').repla
 // email + company intel. Built ONCE and cached globally (prewarmed at startup),
 // so a prospect page never pays for this. Only the per-prospect emails are
 // generated on demand — that's what keeps first paint fast.
-let baseCache = { cards: null, exp: 0 };
-let basePromise = null;
-async function getBaseCards() {
-  if (baseCache.cards && baseCache.exp > Date.now()) return baseCache.cards;
-  if (basePromise) return basePromise; // coalesce concurrent builds
-  basePromise = (async () => {
+const baseCache = new Map(); // sigKey -> { cards, exp }
+const basePromise = new Map(); // sigKey -> Promise (coalesce concurrent builds)
+async function getBaseCards(sigKey) {
+  const s = sigCfg(sigKey);
+  const hit = baseCache.get(sigKey);
+  if (hit && hit.exp > Date.now()) return hit.cards;
+  if (basePromise.has(sigKey)) return basePromise.get(sigKey);
+  const pr = (async () => {
     try {
-      const rows = await supabaseSignals();
-      const candidates = selectCards(rows, 14); // UK already enforced in selectCards
+      const rows = await supabaseSignals(s.clientId);
+      const candidates = selectCards(rows, 14, s.freshDays); // UK already enforced in selectCards
       const picked = [];
       let lookups = 0;
       for (const c of candidates) {
@@ -156,7 +166,7 @@ async function getBaseCards() {
       }
       // One Haiku call: extract company intel for all cards at once.
       try {
-        const prompt = `For each public hiring post below, extract facts about the hiring company. Use ONLY what is explicitly stated or clearly evident; NEVER invent; use null if unknown.
+        const prompt = `For each ${s.intelNoun} below, extract facts about the company. Use ONLY what is explicitly stated or clearly evident; NEVER invent; use null if unknown.
 
 ${picked.map((c, i) => `[${i + 1}] Author: ${c.name || ''}; Headline: ${c.headline || ''}; Post: """${(c.post_text || '').slice(0, 600)}"""`).join('\n\n')}
 
@@ -165,33 +175,36 @@ Return ONLY a JSON array of ${picked.length} objects, in the same order: [{"comp
         const arr = JSON.parse(raw.match(/\[[\s\S]*\]/)[0]);
         picked.forEach((c, i) => { c._intel = arr[i] || {}; });
       } catch (e) { picked.forEach((c) => { c._intel = c._intel || {}; }); }
-      baseCache = { cards: picked, exp: Date.now() + 60 * 60000 }; // refresh hourly
+      baseCache.set(sigKey, { cards: picked, exp: Date.now() + 60 * 60000 }); // refresh hourly
       return picked;
-    } finally { basePromise = null; }
+    } finally { basePromise.delete(sigKey); }
   })();
-  return basePromise;
+  basePromise.set(sigKey, pr);
+  return pr;
 }
 
 // ── PER-PROSPECT: clone the shared base and write the 3 emails in their voice
 // (one batched Haiku call). Cached per token so a second open is instant.
 const cardsCache = new Map(); // token/key -> { cards, exp }
 async function buildProspectCards(ctx) {
-  const key = ctx.token || `${ctx.to}|${ctx.from}`;
+  const SIG = sigCfg(ctx.signal);
+  const svc = resolveService(ctx.signal, ctx.service);
+  const SVC = SIG.services[svc];
+  const key = `${ctx.token || `${ctx.to}|${ctx.from}`}|${ctx.signal}|${svc}`;
   const hit = cardsCache.get(key);
   if (hit && hit.exp > Date.now()) return hit.cards;
-  const base = await getBaseCards();
+  const base = await getBaseCards(ctx.signal);
   const cards = base.map((c) => ({ ...c })); // clone so emails don't mutate shared base
   // One small Haiku call PER card, in parallel — lower wall-clock latency than a
   // single big batched call, so the cards fill in faster behind the loader.
   await Promise.all(cards.map(async (c) => {
     try {
       const company = (c._intel && c._intel.company) || c.name || 'the company';
-      const role = (c._intel && c._intel.role_hiring) || '';
-      const prompt = `Write ONE short cold email FROM ${ctx.from ? ctx.from + ' at ' : ''}${ctx.to} (a sales coaching and training business that helps companies ramp and train new sales hires so they hit quota faster) TO ${company}${role ? ' about their ' + role + ' hire' : ''}.
+      const prompt = `Write ONE short cold email FROM ${ctx.from ? ctx.from + ' at ' : ''}${ctx.to} (${SVC.senderDesc}) TO ${company}${SIG.emailAbout(c._intel)}.
 
 POST: """${(c.post_text || '').slice(0, 400)}"""
 
-Rules: start "Hi <recipient's first name, or 'there' if a company account>,"; 3 to 4 short sentences; max 70 words; reference their SPECIFIC role and company; offer to help their new hire(s) ramp and hit quota faster; end on ONE soft question; British English; NO em or en dashes; no buzzwords; do NOT write a signature.
+Rules: start "Hi <recipient's first name, or 'there' if a company account>,"; 3 to 4 short sentences; max 70 words; ${SVC.emailRefAsk}; end on ONE soft question; British English; NO em or en dashes; no buzzwords; do NOT write a signature.
 
 Return ONLY JSON: {"subject":<6 words max, personal>,"body":<email body with \\n line breaks>}`;
       const raw = await haiku(prompt, 320, MODEL);
@@ -205,6 +218,7 @@ Return ONLY JSON: {"subject":<6 words max, personal>,"body":<email body with \\n
 
 // The 3 cards + CTAs — the async fragment fetched into the loading shell.
 function cardsFragment(cards, ctx) {
+  const SIG = sigCfg(ctx.signal);
   const ctas = [
     `${ctx.firstName ? ctx.firstName + ', book' : 'Book'} your 15-minute call to get enquiries like these`, // 1: first name
     `Book a call to get ${ctx.to} enquiries like these every week`, // 2: company
@@ -217,13 +231,14 @@ function cardsFragment(cards, ctx) {
         ${c.image_url ? `<img class="avatar" src="${esc(c.image_url)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ''}
         <span class="who">${esc(c.name || 'Anonymous')}</span>
         ${c.location ? `<span class="loc">· ${esc(c.location)}</span>` : ''}
-        <span class="src">${sourceLabel(c.source)} · ${ago(c.posted_at || c.created_at)}</span>
+        <span class="src">${ago(c.posted_at || c.created_at)}</span>
       </div>
       ${c.headline ? `<div class="headline">${esc(c.headline)}</div>` : ''}
       ${(() => {
         const i = c._intel || {};
         const domain = (c._foundEmail && c._foundEmail.split('@')[1]) || i.website || null;
-        const rows = [['Company', i.company], ['Hiring', i.role_hiring], ['Location', i.location || c.location], ['Industry', i.industry], ['Company size', i.company_size]];
+        const sig = SIG.signalRow(i);
+        const rows = [['Company', i.company], ...(sig ? [sig] : []), ['Location', i.location || c.location], ['Industry', i.industry], ['Company size', i.company_size]];
         let cells = rows.filter(([, v]) => v).map(([k, v]) => `<div class="ic"><span>${k}</span>${esc(String(v))}</div>`).join('');
         if (domain) cells += `<div class="ic"><span>Website</span><a href="https://${esc(domain.replace(/^https?:\/\//, ''))}" target="_blank" rel="noopener">${esc(domain.replace(/^https?:\/\//, ''))}</a></div>`;
         if (c.linkedin_url) cells += `<div class="ic"><span>LinkedIn</span><a href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">View profile</a></div>`;
@@ -245,7 +260,7 @@ function cardsFragment(cards, ctx) {
     ${ctaBtn(i)}`).join('');
 
   const shortfall = cards.length < 3
-    ? `<div class="note">We're showing the ${cards.length === 1 ? 'one' : cards.length} strongest live signal${cards.length === 1 ? '' : 's'} from the last ${FRESH_DAYS} days. We'd rather show fewer real ones than pad with weak matches, and more surface every week.</div>` : '';
+    ? `<div class="note">We're showing the ${cards.length === 1 ? 'one' : cards.length} strongest live signal${cards.length === 1 ? '' : 's'} from the last ${SIG.freshDays} days. We'd rather show fewer real ones than pad with weak matches, and more surface every week.</div>` : '';
   return shortfall + cardHtml;
 }
 
@@ -253,6 +268,11 @@ function cardsFragment(cards, ctx) {
 // asynchronously from /cards, so the page paints immediately.
 function shellPage(ctx, cardCount) {
   const to = ctx.to;
+  const SIG = sigCfg(ctx.signal);
+  const SVC = SIG.services[resolveService(ctx.signal, ctx.service)];
+  const subHeader = `Built to generate high-quality enquiries without paid ads or content. Designed specifically for ${SVC.audience}.`;
+  const signalLine = `${SIG.needLead}${SVC.needTail ? ' ' + SVC.needTail : ''}`;
+  const loaderMsgs = ['Sourcing your exact ideal clients…', `Scanning live ${SIG.loaderMoment}…`, 'Verifying their contact details…', 'Drafting your personalised emails…'];
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Signal Proof — ${esc(to)}</title>
 <style>
@@ -321,9 +341,9 @@ function shellPage(ctx, cardCount) {
   .email .esubj{padding:14px 18px 4px;font-weight:700;font-size:16px;color:#111}
   .email .ebody{padding:4px 18px 18px;white-space:normal}
 </style></head><body><div class="wrap">
-  <div class="brand"><img class="logo" src="/assets/ProspectMachine_Logo_Black.jpg" alt="Prospect Machine" onerror="this.style.display='none'"><span>Built to generate high-quality enquiries without paid ads or content. Designed specifically for coaches, consultants and service-based business owners.</span></div>
+  <div class="brand"><img class="logo" src="/assets/ProspectMachine_Logo_Black.jpg" alt="Prospect Machine" onerror="this.style.display='none'"><span>${subHeader}</span></div>
   <h1>${ctx.firstName ? esc(ctx.firstName) + ', the ' : 'The '}<span class="hl">right clients</span> are already looking for you.</h1>
-  <p class="sub">Here are <b>${cardCount} UK ${cardCount === 1 ? 'business' : 'businesses'}</b> who signalled in the last ${FRESH_DAYS} days that they need exactly what you do: they're hiring and scaling their sales team, right now. We'd take care of finding these people, writing and sending the emails, and following up, so enquiries of this quality land in your inbox every single week. You always have people ready to speak to you who need your services right now. No ads, no chasing.</p>
+  <p class="sub">Here ${cardCount === 1 ? 'is' : 'are'} <b>${cardCount} UK ${cardCount === 1 ? 'business' : 'businesses'}</b> who signalled in the last ${SIG.freshDays} days that they need exactly what you do: ${signalLine}, right now. We'd take care of finding these people, writing and sending the emails, and following up, so enquiries of this quality land in your inbox every single week. You always have people ready to speak to you who need your services right now. No ads, no chasing.</p>
   <div id="cards"><div class="loadwrap"><div class="spin"></div><div class="loadmsg">Sourcing your exact ideal clients…</div></div></div>
   <div class="stories">
     <div class="storieshead">Real results for businesses like yours</div>
@@ -365,11 +385,11 @@ function shellPage(ctx, cardCount) {
   window.__prospect = { firstName: ${JSON.stringify(ctx.firstName || '')}, lastName: ${JSON.stringify(ctx.lastName || '')}, email: ${JSON.stringify(ctx.email || '')} };
   function sendBook(){ var b=document.getElementById('booking'); b.style.display='block'; b.scrollIntoView({behavior:'smooth',block:'start'}); }
   (function(){
-    var msgs=["Sourcing your exact ideal clients…","Scanning live UK hiring signals…","Verifying their contact details…","Drafting your personalised emails…"];
+    var msgs=${JSON.stringify(loaderMsgs)};
     var el=document.querySelector('.loadmsg'), i=0;
     var t=setInterval(function(){ i=(i+1)%msgs.length; if(el){ el.style.opacity=0; setTimeout(function(){ el.textContent=msgs[i]; el.style.opacity=1; },180); } },1600);
     var TOKEN=${JSON.stringify(ctx.token || '')};
-    var url=TOKEN ? '/cards/'+encodeURIComponent(TOKEN) : '/cards'+location.search;
+    var url=TOKEN ? '/cards/'+encodeURIComponent(TOKEN)+location.search : '/cards'+location.search;
     fetch(url).then(function(r){ if(!r.ok) throw new Error('load'); return r.text(); })
       .then(function(html){ clearInterval(t); var box=document.getElementById('cards'); if(box) box.innerHTML=html; })
       .catch(function(){ clearInterval(t); if(el){ el.textContent='Could not load right now — please refresh the page.'; } });
@@ -392,20 +412,25 @@ const pageCache = new Map(); // req.url -> { html, exp } — shells + card fragm
 
 // Resolve the prospect + render context from a /s/<token> or /cards/<token> path
 // (or ?query for local dev). Returns { ctx } or { blocked:'gone'|'guard' }.
-async function resolveCtx(u) {
+async function resolveCtx(u, host) {
   const tokenMatch = u.pathname.match(/^\/(?:s|cards)\/([A-Za-z0-9_-]+)/);
   const token = tokenMatch ? tokenMatch[1] : null;
   const p = await getProspect(token);
   if (token && !p) return { blocked: 'gone' };
   if (TOKEN_ONLY && !p) return { blocked: 'guard' }; // public cost guard
-  const to = p ? p.company : (u.searchParams.get('to') || 'Your Coaching Business');
+  const to = p ? p.company : (u.searchParams.get('to') || 'Your Business');
   const from = p ? (p.sender_name || p.first_name) : (u.searchParams.get('from') || '');
   const firstName = p ? p.first_name : (from ? from.split(' ')[0] : (u.searchParams.get('name') || ''));
   const lastName = (p ? (p.sender_name || '') : (u.searchParams.get('lastname') || from)).split(/\s+/).slice(1).join(' ');
   const slug = to.toLowerCase().replace(/[^a-z0-9]+/g, '');
   const site = p ? p.website : (u.searchParams.get('site') || (slug ? slug + '.co.uk' : ''));
   const cEmail = p ? p.email : (u.searchParams.get('email') || (site ? (from ? from.split(' ')[0].toLowerCase() + '@' + site : 'hello@' + site) : ''));
-  return { ctx: { to, from, firstName, lastName, site, email: cEmail, token } };
+  const rawVariant = p && (p.service || p.variant); // "office-moved:it" or just "it"
+  // Signal per request: ?signal= > prospect's stored signal/variant > Host subdomain > default
+  const subdomain = (host || '').split(':')[0].split('.')[0];
+  const sigKey = resolveSignal(u.searchParams.get('signal') || (p && p.signal) || (rawVariant && rawVariant.includes(':') ? rawVariant.split(':')[0] : null) || SUBDOMAIN_SIGNAL[subdomain]);
+  const rawSvc = u.searchParams.get('service') || (rawVariant && rawVariant.includes(':') ? rawVariant.split(':')[1] : rawVariant) || '';
+  return { ctx: { to, from, firstName, lastName, site, email: cEmail, token, signal: sigKey, service: resolveService(sigKey, rawSvc) } };
 }
 
 const server = http.createServer(async (req_, res) => {
@@ -428,7 +453,7 @@ const server = http.createServer(async (req_, res) => {
     if (u.pathname.startsWith('/cards')) {
       const cachedF = pageCache.get(req_.url);
       if (cachedF && cachedF.exp > Date.now()) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(cachedF.html); }
-      const { ctx, blocked } = await resolveCtx(u);
+      const { ctx, blocked } = await resolveCtx(u, req_.headers.host);
       if (blocked) { res.writeHead(blocked === 'gone' ? 404 : 403); return res.end(''); }
       const cards = await buildProspectCards(ctx);
       const html = cardsFragment(cards, ctx);
@@ -440,10 +465,11 @@ const server = http.createServer(async (req_, res) => {
     // ── /s/<token> (or root/query) — instant shell, cards load after ──
     const cachedShell = pageCache.get(req_.url);
     if (cachedShell && cachedShell.exp > Date.now()) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(cachedShell.html); }
-    const { ctx, blocked } = await resolveCtx(u);
+    const { ctx, blocked } = await resolveCtx(u, req_.headers.host);
     if (blocked === 'gone') { res.writeHead(404, { 'content-type': 'text/html' }); return res.end(landing('This link is no longer valid.', 'Ask your Prospect Machine contact for an up to date link.')); }
     if (blocked === 'guard') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(landing('This is a personalised page.', 'Your unique link was included in the email we sent you. Open it there to see the businesses signalling for you right now.')); }
-    const cardCount = baseCache.cards && baseCache.cards.length ? baseCache.cards.length : 3;
+    const bc = baseCache.get(ctx.signal);
+    const cardCount = bc && bc.cards ? bc.cards.length : 3;
     const html = shellPage(ctx, cardCount);
     pageCache.set(req_.url, { html, exp: Date.now() + 30 * 60000 });
     res.writeHead(200, { 'content-type': 'text/html' });
@@ -457,6 +483,8 @@ server.listen(PORT, () => {
   console.log(`\n  Signal Proof — Magnet`);
   console.log(`  → http://localhost:${PORT}`);
   console.log(`  twin DB: ${SUPABASE_URL ? 'loaded ✓' : 'MISSING ✗'}  ·  Anthropic: ${ANTHROPIC_KEY ? 'loaded ✓' : 'MISSING ✗'}`);
-  // Prewarm the shared base cards so the first prospect open is instant.
-  getBaseCards().then((c) => console.log(`  base cards prewarmed: ${c.length} ✓\n`)).catch((e) => console.log(`  base prewarm deferred (${e.message})\n`));
+  // Prewarm each shelf's base cards so the first prospect open is instant.
+  Object.keys(SIGNALS).forEach((k) => getBaseCards(k)
+    .then((c) => console.log(`  prewarmed ${k}: ${c.length} enquiries ✓`))
+    .catch((e) => console.log(`  ${k} prewarm deferred (${e.message})`)));
 });
