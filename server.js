@@ -41,6 +41,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
 const FINDYMAIL_KEY = process.env.FINDYMAIL_API_KEY;
+// Gated admin console (overview + CSV link-minting), served at /console?key=…
+const { buildLinks } = require('./build-links');
+const CONSOLE_KEY = process.env.CONSOLE_KEY || require('crypto').createHash('sha256').update((SUPABASE_KEY || 'x') + 'signal-proof-console').digest('hex').slice(0, 20);
 const emailCache = new Map(); // linkedin_url -> email (persisted; a lead is only ever looked up once)
 // Prospect token store. Production: a magnet_prospects DB table, token minted when added to a campaign.
 const PROSPECTS = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'prospects.json'), 'utf8')); } catch (e) { return {}; } })();
@@ -408,16 +411,92 @@ body{margin:0;background:#000;color:#fff;font:16px/1.6 Inter,-apple-system,Segoe
 <body><div class="box"><img src="/assets/ProspectMachine_Logo_Black.jpg" alt="Prospect Machine" onerror="this.style.display='none'"><h1>${esc(title)}</h1><p>${esc(sub)}</p><a href="https://prospectmachine.co">Visit prospectmachine.co</a></div></body></html>`;
 }
 
+// ── gated admin console: your markets & services + CSV link-minting ──
+async function enquiryCounts() {
+  const out = {};
+  await Promise.all(Object.keys(SIGNALS).map(async (k) => {
+    try { out[k] = (await supabaseSignals(SIGNALS[k].clientId)).length; } catch { out[k] = null; }
+  }));
+  return out;
+}
+function consolePage(counts) {
+  const K = encodeURIComponent(CONSOLE_KEY);
+  const sigMap = Object.fromEntries(Object.entries(SIGNALS).map(([sk, s]) => [sk, {
+    label: s.label || sk, defaultService: s.defaultService,
+    services: Object.entries(s.services).map(([k, v]) => ({ key: k, label: v.label || k })),
+  }]));
+  const sections = Object.entries(SIGNALS).map(([sk, s]) => {
+    const svc = Object.entries(s.services).map(([k, v]) =>
+      `<a class="svc" href="/?signal=${sk}&service=${k}&to=Demo%20Business&from=Sam&key=${K}" target="_blank" rel="noopener">
+        <div class="svcname">${esc(v.label || k)}</div><div class="svcaud">${esc(v.audience)}</div>
+        <div class="svcneed">"…and need ${esc(v.needTail || 'exactly what you do')}"</div></a>`).join('');
+    return `<section class="sig"><div class="sighead">
+      <div><div class="signame">${esc(s.label || sk)}</div><div class="sigsub">signal · <code>${sk}</code> · window ${s.freshDays}d</div></div>
+      <div class="pool"><b>${counts[sk] == null ? '—' : counts[sk]}</b> live enquiries</div></div>
+      <div class="svcgrid">${svc}</div></section>`;
+  }).join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signal Proof — Console</title>
+<style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+:root{--gold:#c9a84c;--panel:#121110;--line:rgba(201,168,76,.28);--mut:#9b958a}*{box-sizing:border-box}
+body{margin:0;background:#0b0a09;color:#eee;font:15px/1.5 Inter,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 20px 70px}
+.wrap{max-width:1000px;margin:0 auto}h1{font-size:26px;margin:0 0 4px}h2{font-size:17px;color:var(--gold);margin:34px 0 14px;letter-spacing:.02em}
+.lede{color:var(--mut);margin:0 0 8px;font-size:14px}
+.sig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+.sighead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px;flex-wrap:wrap}
+.signame{font-size:18px;font-weight:700;color:#fff}.sigsub{color:var(--mut);font-size:12px;margin-top:2px}.sigsub code{color:#d8c98f}
+.pool{color:var(--gold);font-size:13px;text-align:right}.pool b{font-size:24px;margin-right:5px}
+.svcgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px}
+.svc{display:block;text-decoration:none;background:#0e0d0c;border:1px solid var(--line);border-radius:10px;padding:13px;transition:.15s}
+.svc:hover{border-color:var(--gold);background:rgba(201,168,76,.06)}
+.svcname{color:var(--gold);font-weight:700;font-size:14px;margin-bottom:3px}.svcaud{color:#efeadd;font-size:12px;margin-bottom:7px}.svcneed{color:var(--mut);font-size:11.5px;font-style:italic}
+.mint{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.row{display:flex;gap:12px;margin-bottom:14px}.row label{flex:1;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--gold)}
+select{width:100%;margin-top:6px;padding:11px;background:#0e0d0c;color:#efeadd;border:1px solid var(--line);border-radius:9px;font-size:14px}
+.drop{display:block;border:2px dashed rgba(201,168,76,.4);border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;background:#0e0d0c}.drop.over{border-color:var(--gold)}.drop b{color:var(--gold)}#file{display:none}
+.nm{margin-top:12px;font-size:13px;color:#efeadd}
+button{margin-top:16px;width:100%;padding:13px;font-size:15px;font-weight:700;background:var(--gold);color:#000;border:0;border-radius:9px;cursor:pointer}button:disabled{opacity:.45}
+.out{margin-top:18px;padding:15px;border-radius:10px;background:#0e0d0c;border:1px solid var(--line);display:none}.out.show{display:block}.out b{color:var(--gold)}.dl{display:inline-block;margin-top:10px;background:var(--gold);color:#000;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px}.err{color:#ef8a8a}
+code{background:#1a1917;padding:2px 6px;border-radius:5px;color:#d8c98f;font-size:12.5px}.hint{margin-top:14px;font-size:12px;color:#6b665d}</style></head>
+<body><div class="wrap">
+<h1>Signal Proof — Console</h1>
+<p class="lede">Your live markets (signals) and the services running off each. Click any service to preview its page.</p>
+${sections}
+<h2>Mint campaign links</h2>
+<div class="mint">
+  <p class="lede">Pick the market + service this campaign targets, drop your lead CSV, get a CSV back with a <code>signal_link</code> per lead for PlusVibe.</p>
+  <div class="row"><label>Market (signal)<select id="signal"></select></label><label>Service (who you email)<select id="service"></select></label></div>
+  <label class="drop" id="drop"><div>Drag your CSV here or <b>click to choose</b></div><input id="file" type="file" accept=".csv,text/csv"><div class="nm" id="nm"></div></label>
+  <button id="go" disabled>Build links</button>
+  <div class="out" id="out"></div>
+  <div class="hint">A <code>service</code> column in your CSV overrides the dropdown per row. Minting is free — a lead only costs anything when they open their link.</div>
+</div></div>
+<script>
+const SIG=${JSON.stringify(sigMap)}, KEY=${JSON.stringify(CONSOLE_KEY)};
+const sSel=document.getElementById('signal'),vSel=document.getElementById('service'),file=document.getElementById('file'),drop=document.getElementById('drop'),nm=document.getElementById('nm'),go=document.getElementById('go'),out=document.getElementById('out');
+for(const k in SIG){const o=document.createElement('option');o.value=k;o.textContent=SIG[k].label;sSel.appendChild(o);}
+function fill(){vSel.innerHTML='';const s=SIG[sSel.value];for(const x of s.services){const o=document.createElement('option');o.value=x.key;o.textContent=x.label;vSel.appendChild(o);}vSel.value=s.defaultService;}
+sSel.onchange=fill;fill();let picked=null;
+function set(f){if(!f)return;picked=f;nm.textContent='📄 '+f.name;go.disabled=false;out.className='out';}
+file.onchange=e=>set(e.target.files[0]);drop.ondragover=e=>{e.preventDefault();drop.classList.add('over');};drop.ondragleave=()=>drop.classList.remove('over');drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');set(e.dataTransfer.files[0]);};
+go.onclick=async()=>{if(!picked)return;go.disabled=true;go.textContent='Building…';const text=await picked.text();
+ try{const r=await fetch('/console/mint?key='+encodeURIComponent(KEY),{method:'POST',headers:{'content-type':'text/csv','x-signal':sSel.value,'x-service':vSel.value},body:text});const j=await r.json();if(!j.ok)throw new Error(j.error||'failed');
+  const url=URL.createObjectURL(new Blob([j.csv],{type:'text/csv'}));out.className='out show';
+  out.innerHTML='<div><b>'+j.minted+'</b> links minted for <b>'+sSel.value+' · '+j.service+'</b>'+(j.skipped?' · <b>'+j.skipped+'</b> skipped (no email)':'')+'</div><a class="dl" href="'+url+'" download="'+j.outName+'">Download '+j.outName+'</a><div class="hint" style="margin-top:10px">Upload to PlusVibe, use <code>{{signal_link}}</code> in your reply.</div>';
+ }catch(e){out.className='out show';out.innerHTML='<div class="err">Error: '+e.message+'</div>';}
+ go.disabled=false;go.textContent='Build links';};
+</script></body></html>`;
+}
+
 const pageCache = new Map(); // req.url -> { html, exp } — shells + card fragments
 
 // Resolve the prospect + render context from a /s/<token> or /cards/<token> path
 // (or ?query for local dev). Returns { ctx } or { blocked:'gone'|'guard' }.
-async function resolveCtx(u, host) {
+async function resolveCtx(u, host, authed) {
   const tokenMatch = u.pathname.match(/^\/(?:s|cards)\/([A-Za-z0-9_-]+)/);
   const token = tokenMatch ? tokenMatch[1] : null;
   const p = await getProspect(token);
   if (token && !p) return { blocked: 'gone' };
-  if (TOKEN_ONLY && !p) return { blocked: 'guard' }; // public cost guard
+  if (TOKEN_ONLY && !p && !authed) return { blocked: 'guard' }; // public cost guard (console key previews bypass)
   const to = p ? p.company : (u.searchParams.get('to') || 'Your Business');
   const from = p ? (p.sender_name || p.first_name) : (u.searchParams.get('from') || '');
   const firstName = p ? p.first_name : (from ? from.split(' ')[0] : (u.searchParams.get('name') || ''));
@@ -448,12 +527,32 @@ const server = http.createServer(async (req_, res) => {
     }
 
     const u = new URL(req_.url, `http://localhost:${PORT}`);
+    const authed = u.searchParams.get('key') === CONSOLE_KEY; // admin console / preview
+
+    // ── /console (gated: markets & services overview + CSV link-minting) ──
+    if (u.pathname === '/console' || u.pathname === '/console/mint') {
+      if (!authed) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+      if (u.pathname === '/console/mint' && req_.method === 'POST') {
+        let body = '';
+        req_.on('data', (c) => (body += c));
+        req_.on('end', async () => {
+          try {
+            const { csv, minted, skipped, service } = await buildLinks(body, { signal: req_.headers['x-signal'], service: req_.headers['x-service'] });
+            res.writeHead(200, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, minted, skipped, csv, service, outName: `campaign-${req_.headers['x-signal'] || 'links'}-${service || ''}.csv` }));
+          } catch (e) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: e.message })); }
+        });
+        return;
+      }
+      const counts = await enquiryCounts();
+      res.writeHead(200, { 'content-type': 'text/html' }); return res.end(consolePage(counts));
+    }
 
     // ── /cards — the heavy Findymail + AI build, fetched async by the shell ──
     if (u.pathname.startsWith('/cards')) {
       const cachedF = pageCache.get(req_.url);
       if (cachedF && cachedF.exp > Date.now()) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(cachedF.html); }
-      const { ctx, blocked } = await resolveCtx(u, req_.headers.host);
+      const { ctx, blocked } = await resolveCtx(u, req_.headers.host, authed);
       if (blocked) { res.writeHead(blocked === 'gone' ? 404 : 403); return res.end(''); }
       const cards = await buildProspectCards(ctx);
       const html = cardsFragment(cards, ctx);
@@ -465,7 +564,7 @@ const server = http.createServer(async (req_, res) => {
     // ── /s/<token> (or root/query) — instant shell, cards load after ──
     const cachedShell = pageCache.get(req_.url);
     if (cachedShell && cachedShell.exp > Date.now()) { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(cachedShell.html); }
-    const { ctx, blocked } = await resolveCtx(u, req_.headers.host);
+    const { ctx, blocked } = await resolveCtx(u, req_.headers.host, authed);
     if (blocked === 'gone') { res.writeHead(404, { 'content-type': 'text/html' }); return res.end(landing('This link is no longer valid.', 'Ask your Prospect Machine contact for an up to date link.')); }
     if (blocked === 'guard') { res.writeHead(200, { 'content-type': 'text/html' }); return res.end(landing('This is a personalised page.', 'Your unique link was included in the email we sent you. Open it there to see the businesses signalling for you right now.')); }
     const bc = baseCache.get(ctx.signal);

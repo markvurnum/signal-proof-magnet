@@ -38,7 +38,7 @@ const { SIGNALS } = require('./signals');
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
-const DEFAULT_BASE = (process.env.MAGNET_BASE_URL || 'https://signals.prospectconnect.io').replace(/\/+$/, '');
+const DEFAULT_BASE = (process.env.MAGNET_BASE_URL || 'https://signals.prospectmachine.co').replace(/\/+$/, '');
 
 // ── minimal CSV parse/stringify (handles quoted fields, commas, CRLF) ──
 function parseCSV(text) {
