@@ -268,7 +268,7 @@ function cardsFragment(cards, ctx) {
         const realEmail = c._foundEmail || i.email;
         const anyEmail = realEmail || c._illustrativeEmail;
         const emailCell = anyEmail
-          ? `<div class="ic email"><span>Email${realEmail ? ' · verified' : ' · likely'}</span>${esc(anyEmail)}</div>`
+          ? `<div class="ic email"><span>Email${realEmail ? ' · verified' : ''}</span>${esc(anyEmail)}</div>`
           : `<div class="ic email"><span>Email</span><em>${FINDYMAIL_KEY ? 'no match found' : 'connect enrichment to reveal'}</em></div>`;
         return `<div class="intel">${cells}${emailCell}</div>`;
       })()}
