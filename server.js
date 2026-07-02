@@ -156,9 +156,10 @@ function illustrativeDomain(c) {
 }
 function illustrativeLocal(name) {
   const n = String(name || '').trim();
-  if (!n || /\b(ltd|limited|llp|plc|group|solutions|services|aggregates|recruitment|software|systems|consult|company)\b/i.test(n) || n.split(/\s+/).length > 3) return 'info';
-  const f = n.split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
-  return f && f.length >= 2 ? f : 'info';
+  if (!n || /\b(ltd|limited|llp|plc|group|solutions|services|aggregates|recruitment|software|systems|consult|company|marketing|associates|partners|holdings)\b/i.test(n)) return 'info';
+  const parts = n.split(/[\s.\-–]+/).map((p) => p.toLowerCase().replace(/[^a-z]/g, '')).filter((p) => p.length >= 2 && !/^(the|and|dr|mr|mrs|ms)$/.test(p));
+  if (parts.length >= 2) return parts[0] + '.' + parts[1]; // firstname.lastname@domain
+  return parts[0] || 'info';
 }
 
 // ── SHARED base cards (identical for every prospect): lead selection + verified
