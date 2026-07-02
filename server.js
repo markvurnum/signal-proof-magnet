@@ -144,6 +144,23 @@ const sourceLabel = (s) => ({ twitter: 'X / Twitter', reddit: 'Reddit', linkedin
 
 const stripDashes = (s = '') => String(s).replace(/\s*[—–]\s*/g, ', ').replace(/[—–]/g, '-').replace(/,\s*,/g, ',');
 
+// Illustrative email (name@domain) when Findymail finds no verified address — so a
+// card can still be shown for demo/illustration. Labelled "likely", never "verified".
+function illustrativeDomain(c) {
+  const i = c._intel || {};
+  let d = String(i.website || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^www\./, '').trim().toLowerCase();
+  const toSlug = (x) => String(x).toLowerCase().replace(/&/g, ' and ').replace(/\b(ltd|limited|llp|plc|inc|group|uk)\b/g, '').replace(/[^a-z0-9]+/g, '');
+  if (!d) { const co = i.company || c.company; if (co) { const slug = toSlug(co); if (slug.length >= 3) d = slug + '.co.uk'; } }
+  if (!d && c.name) { const slug = toSlug(c.name); if (slug.length >= 3 && slug.length <= 30) d = slug + '.co.uk'; } // last resort so we can still illustrate
+  return d && /^[a-z0-9-]+(\.[a-z0-9-]+)+\.[a-z]{2,}$|^[a-z0-9-]+\.[a-z]{2,}$/.test(d) ? d : null;
+}
+function illustrativeLocal(name) {
+  const n = String(name || '').trim();
+  if (!n || /\b(ltd|limited|llp|plc|group|solutions|services|aggregates|recruitment|software|systems|consult|company)\b/i.test(n) || n.split(/\s+/).length > 3) return 'info';
+  const f = n.split(/\s+/)[0].toLowerCase().replace(/[^a-z]/g, '');
+  return f && f.length >= 2 ? f : 'info';
+}
+
 // ── SHARED base cards (identical for every prospect): lead selection + verified
 // email + company intel. Built ONCE and cached globally (prewarmed at startup),
 // so a prospect page never pays for this. Only the per-prospect emails are
@@ -158,26 +175,29 @@ async function getBaseCards(sigKey) {
   const pr = (async () => {
     try {
       const rows = await supabaseSignals(s.clientId);
-      const candidates = selectCards(rows, 14, s.freshDays); // UK already enforced in selectCards
-      const picked = [];
-      let lookups = 0;
-      for (const c of candidates) {
-        if (picked.length >= 4 || lookups >= 10) break; // cap credit use (Findymail persisted)
-        const email = await findymailLookup(c.linkedin_url, c.name, c.company);
-        lookups++;
-        if (email) { c._foundEmail = email; picked.push(c); }
-      }
-      // One Haiku call: extract company intel for all cards at once.
+      const pool = selectCards(rows, 14, s.freshDays).slice(0, 8); // UK already enforced in selectCards
+      // Intel FIRST (one Haiku call) so we have company + website for illustrative emails.
       try {
         const prompt = `For each ${s.intelNoun} below, extract facts about the company. Use ONLY what is explicitly stated or clearly evident; NEVER invent; use null if unknown.
 
-${picked.map((c, i) => `[${i + 1}] Author: ${c.name || ''}; Headline: ${c.headline || ''}; Post: """${(c.post_text || '').slice(0, 600)}"""`).join('\n\n')}
+${pool.map((c, i) => `[${i + 1}] Author: ${c.name || ''}; Headline: ${c.headline || ''}; Post: """${(c.post_text || '').slice(0, 600)}"""`).join('\n\n')}
 
-Return ONLY a JSON array of ${picked.length} objects, in the same order: [{"company":..,"location":..,"industry":..,"company_size":..,"role_hiring":..,"website":..,"email":..}]`;
-        const raw = await haiku(prompt, 700, MODEL);
+Return ONLY a JSON array of ${pool.length} objects, in the same order: [{"company":..,"location":..,"industry":..,"company_size":..,"role_hiring":..,"website":..,"email":..}]`;
+        const raw = await haiku(prompt, 900, MODEL);
         const arr = JSON.parse(raw.match(/\[[\s\S]*\]/)[0]);
-        picked.forEach((c, i) => { c._intel = arr[i] || {}; });
-      } catch (e) { picked.forEach((c) => { c._intel = c._intel || {}; }); }
+        pool.forEach((c, i) => { c._intel = arr[i] || {}; });
+      } catch (e) { pool.forEach((c) => { c._intel = c._intel || {}; }); }
+      // Verified email via Findymail; else an illustrative name@domain so we can still show the card.
+      const picked = [];
+      let lookups = 0;
+      for (const c of pool) {
+        if (picked.length >= 4) break;
+        let email = null;
+        if (lookups < 10) { email = await findymailLookup(c.linkedin_url, c.name, c.company || (c._intel && c._intel.company)); lookups++; }
+        if (email) { c._foundEmail = email; picked.push(c); continue; }
+        const dom = illustrativeDomain(c);
+        if (dom) { c._illustrativeEmail = `${illustrativeLocal(c.name)}@${dom}`; picked.push(c); }
+      }
       baseCache.set(sigKey, { cards: picked, exp: Date.now() + 60 * 60000 }); // refresh hourly
       return picked;
     } finally { basePromise.delete(sigKey); }
@@ -239,15 +259,16 @@ function cardsFragment(cards, ctx) {
       ${c.headline ? `<div class="headline">${esc(c.headline)}</div>` : ''}
       ${(() => {
         const i = c._intel || {};
-        const domain = (c._foundEmail && c._foundEmail.split('@')[1]) || i.website || null;
+        const domain = (c._foundEmail && c._foundEmail.split('@')[1]) || i.website || (c._illustrativeEmail && c._illustrativeEmail.split('@')[1]) || null;
         const sig = SIG.signalRow(i);
         const rows = [['Company', i.company], ...(sig ? [sig] : []), ['Location', i.location || c.location], ['Industry', i.industry], ['Company size', i.company_size]];
         let cells = rows.filter(([, v]) => v).map(([k, v]) => `<div class="ic"><span>${k}</span>${esc(String(v))}</div>`).join('');
         if (domain) cells += `<div class="ic"><span>Website</span><a href="https://${esc(domain.replace(/^https?:\/\//, ''))}" target="_blank" rel="noopener">${esc(domain.replace(/^https?:\/\//, ''))}</a></div>`;
         if (c.linkedin_url) cells += `<div class="ic"><span>LinkedIn</span><a href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">View profile</a></div>`;
         const realEmail = c._foundEmail || i.email;
-        const emailCell = realEmail
-          ? `<div class="ic email"><span>Email · verified</span>${esc(realEmail)}</div>`
+        const anyEmail = realEmail || c._illustrativeEmail;
+        const emailCell = anyEmail
+          ? `<div class="ic email"><span>Email${realEmail ? ' · verified' : ' · likely'}</span>${esc(anyEmail)}</div>`
           : `<div class="ic email"><span>Email</span><em>${FINDYMAIL_KEY ? 'no match found' : 'connect enrichment to reveal'}</em></div>`;
         return `<div class="intel">${cells}${emailCell}</div>`;
       })()}
@@ -280,9 +301,14 @@ function shellPage(ctx, cardCount) {
 <title>Signal Proof — ${esc(to)}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-  :root{--panel:#0c0b09;--panel2:#121110;--line:rgba(201,168,76,.30);--gold:#c9a84c;--txt:#fff;--mut:#9b958a;--quote:#e9e4d8}
+  :root{--bg:#000;--panel:#0c0b09;--panel2:#121110;--line:rgba(201,168,76,.30);--gold:#c9a84c;--txt:#fff;--mut:#9b958a;--quote:#e9e4d8}
+  [data-theme=light]{--bg:#f4f1ea;--panel:#fff;--panel2:#faf7f0;--line:rgba(160,125,30,.32);--gold:#9c7d1e;--txt:#1b1710;--mut:#6f695e;--quote:#2b2620}
+  [data-theme=light] .brand{border-bottom-color:rgba(0,0,0,.12)}
+  [data-theme=light] .who,[data-theme=light] .story .stat,[data-theme=light] .sub b,[data-theme=light] h1{color:#1b1710}
+  [data-theme=light] .stories,[data-theme=light] .booking,[data-theme=light] .sitefooter{border-top-color:rgba(0,0,0,.12)}
   *{box-sizing:border-box}
-  body{margin:0;background:#000;color:var(--txt);font:16px/1.55 Inter,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.55 Inter,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  .themebtn{position:fixed;top:14px;right:14px;z-index:20;width:38px;height:38px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--gold);font-size:16px;cursor:pointer;line-height:1}
   .wrap{width:80%;max-width:960px;margin:0 auto;padding:40px 20px 90px}
   @media(max-width:760px){.wrap{width:92%;padding:28px 16px 70px}}
   .brand{display:flex;align-items:center;gap:16px;font-size:13.5px;line-height:1.5;color:var(--mut);border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:16px;margin-bottom:28px}
@@ -343,10 +369,11 @@ function shellPage(ctx, cardCount) {
   .email .ehead b{color:#1a1a1a;font-weight:600;margin-right:4px}
   .email .esubj{padding:14px 18px 4px;font-weight:700;font-size:16px;color:#111}
   .email .ebody{padding:4px 18px 18px;white-space:normal}
-</style></head><body><div class="wrap">
+</style></head><body><button id="themebtn" class="themebtn" onclick="toggleTheme()" title="Light / dark">🌙</button><div class="wrap">
   <div class="brand"><img class="logo" src="/assets/ProspectMachine_Logo_Black.jpg" alt="Prospect Machine" onerror="this.style.display='none'"><span>${subHeader}</span></div>
   <h1>${ctx.firstName ? esc(ctx.firstName) + ', the ' : 'The '}<span class="hl">right clients</span> are already looking for you.</h1>
-  <p class="sub">Here ${cardCount === 1 ? 'is' : 'are'} <b>${cardCount} UK ${cardCount === 1 ? 'business' : 'businesses'}</b> who signalled in the last ${SIG.freshDays} days that they need exactly what you do: ${signalLine}, right now. We'd take care of finding these people, writing and sending the emails, and following up, so enquiries of this quality land in your inbox every single week. You always have people ready to speak to you who need your services right now. No ads, no chasing.</p>
+  <p class="sub">Here ${cardCount === 1 ? 'is' : 'are'} <b>${cardCount} UK ${cardCount === 1 ? 'business' : 'businesses'}</b> who signalled in the last ${SIG.freshDays} days that they need exactly what you do: ${signalLine}, right now.</p>
+  <p class="sub">We'd take care of finding these people, writing and sending the emails, and following up, so enquiries of this quality land in your inbox every single week. You always have people ready to speak to you who need your services right now. No ads, no chasing.</p>
   <div id="cards"><div class="loadwrap"><div class="spin"></div><div class="loadmsg">Sourcing your exact ideal clients…</div></div></div>
   <div class="stories">
     <div class="storieshead">Real results for businesses like yours</div>
@@ -387,6 +414,9 @@ function shellPage(ctx, cardCount) {
 <script>
   window.__prospect = { firstName: ${JSON.stringify(ctx.firstName || '')}, lastName: ${JSON.stringify(ctx.lastName || '')}, email: ${JSON.stringify(ctx.email || '')} };
   function sendBook(){ var b=document.getElementById('booking'); b.style.display='block'; b.scrollIntoView({behavior:'smooth',block:'start'}); }
+  function toggleTheme(){ setTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light'); }
+  function setTheme(t){ document.documentElement.setAttribute('data-theme',t); try{localStorage.setItem('sp-theme',t);}catch(e){} var b=document.getElementById('themebtn'); if(b) b.textContent = t==='light'?'☀️':'🌙'; }
+  (function(){ var t='dark'; try{ t=localStorage.getItem('sp-theme')||'dark'; }catch(e){} setTheme(t); })();
   (function(){
     var msgs=${JSON.stringify(loaderMsgs)};
     var el=document.querySelector('.loadmsg'), i=0;
