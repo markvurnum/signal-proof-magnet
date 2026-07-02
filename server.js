@@ -415,7 +415,10 @@ body{margin:0;background:#000;color:#fff;font:16px/1.6 Inter,-apple-system,Segoe
 async function enquiryCounts() {
   const out = {};
   await Promise.all(Object.keys(SIGNALS).map(async (k) => {
-    try { out[k] = (await supabaseSignals(SIGNALS[k].clientId)).length; } catch { out[k] = null; }
+    let pool = null, shown = null;
+    try { pool = (await supabaseSignals(SIGNALS[k].clientId)).length; } catch {}
+    try { shown = (await getBaseCards(k)).length; } catch {} // actually rendered = has a findable email
+    out[k] = { pool, shown };
   }));
   return out;
 }
@@ -427,12 +430,15 @@ function consolePage(counts) {
   }]));
   const sections = Object.entries(SIGNALS).map(([sk, s]) => {
     const svc = Object.entries(s.services).map(([k, v]) =>
-      `<a class="svc" href="/?signal=${sk}&service=${k}&to=Demo%20Business&from=Sam&key=${K}" target="_blank" rel="noopener">
+      `<div class="svc">
         <div class="svcname">${esc(v.label || k)}</div><div class="svcaud">${esc(v.audience)}</div>
-        <div class="svcneed">"…and need ${esc(v.needTail || 'exactly what you do')}"</div></a>`).join('');
+        <div class="svcneed">"…and need ${esc(v.needTail || 'exactly what you do')}"</div>
+        <div class="svcacts"><a href="/?signal=${sk}&service=${k}&to=Demo%20Business&from=Sam&key=${K}" target="_blank" rel="noopener">Preview page</a> · <a href="#mint" onclick="pickMint('${sk}','${k}');return false;">＋ Upload ${esc(v.label || k)} list</a></div>
+      </div>`).join('');
+    const c = counts[sk] || {};
     return `<section class="sig"><div class="sighead">
       <div><div class="signame">${esc(s.label || sk)}</div><div class="sigsub">signal · <code>${sk}</code> · window ${s.freshDays}d</div></div>
-      <div class="pool"><b>${counts[sk] == null ? '—' : counts[sk]}</b> live enquiries</div></div>
+      <div class="pool"><b>${c.shown == null ? '—' : c.shown}</b> showing now<div class="poolsub">of ${c.pool == null ? '—' : c.pool} in the pool</div></div></div>
       <div class="svcgrid">${svc}</div></section>`;
   }).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signal Proof — Console</title>
@@ -444,11 +450,13 @@ body{margin:0;background:#0b0a09;color:#eee;font:15px/1.5 Inter,-apple-system,Se
 .sig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
 .sighead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px;flex-wrap:wrap}
 .signame{font-size:18px;font-weight:700;color:#fff}.sigsub{color:var(--mut);font-size:12px;margin-top:2px}.sigsub code{color:#d8c98f}
-.pool{color:var(--gold);font-size:13px;text-align:right}.pool b{font-size:24px;margin-right:5px}
+.pool{color:var(--gold);font-size:13px;text-align:right}.pool b{font-size:24px;margin-right:5px}.poolsub{color:var(--mut);font-size:11px;margin-top:1px}
 .svcgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px}
 .svc{display:block;text-decoration:none;background:#0e0d0c;border:1px solid var(--line);border-radius:10px;padding:13px;transition:.15s}
 .svc:hover{border-color:var(--gold);background:rgba(201,168,76,.06)}
 .svcname{color:var(--gold);font-weight:700;font-size:14px;margin-bottom:3px}.svcaud{color:#efeadd;font-size:12px;margin-bottom:7px}.svcneed{color:var(--mut);font-size:11.5px;font-style:italic}
+.svcacts{margin-top:9px;font-size:11.5px}.svcacts a{color:var(--gold);text-decoration:none}.svcacts a:hover{text-decoration:underline}
+.mint.flash{border-color:var(--gold);box-shadow:0 0 0 2px rgba(201,168,76,.25)}
 .mint{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
 .row{display:flex;gap:12px;margin-bottom:14px}.row label{flex:1;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--gold)}
 select{width:100%;margin-top:6px;padding:11px;background:#0e0d0c;color:#efeadd;border:1px solid var(--line);border-radius:9px;font-size:14px}
@@ -462,7 +470,7 @@ code{background:#1a1917;padding:2px 6px;border-radius:5px;color:#d8c98f;font-siz
 <p class="lede">Your live markets (signals) and the services running off each. Click any service to preview its page.</p>
 ${sections}
 <h2>Mint campaign links</h2>
-<div class="mint">
+<div class="mint" id="mint">
   <p class="lede">Pick the market + service this campaign targets, drop your lead CSV, get a CSV back with a <code>signal_link</code> per lead for PlusVibe.</p>
   <div class="row"><label>Market (signal)<select id="signal"></select></label><label>Service (who you email)<select id="service"></select></label></div>
   <label class="drop" id="drop"><div>Drag your CSV here or <b>click to choose</b></div><input id="file" type="file" accept=".csv,text/csv"><div class="nm" id="nm"></div></label>
@@ -475,7 +483,9 @@ const SIG=${JSON.stringify(sigMap)}, KEY=${JSON.stringify(CONSOLE_KEY)};
 const sSel=document.getElementById('signal'),vSel=document.getElementById('service'),file=document.getElementById('file'),drop=document.getElementById('drop'),nm=document.getElementById('nm'),go=document.getElementById('go'),out=document.getElementById('out');
 for(const k in SIG){const o=document.createElement('option');o.value=k;o.textContent=SIG[k].label;sSel.appendChild(o);}
 function fill(){vSel.innerHTML='';const s=SIG[sSel.value];for(const x of s.services){const o=document.createElement('option');o.value=x.key;o.textContent=x.label;vSel.appendChild(o);}vSel.value=s.defaultService;}
-sSel.onchange=fill;fill();let picked=null;
+sSel.onchange=fill;if(SIG['office-moved'])sSel.value='office-moved';fill();
+window.pickMint=function(sig,svc){sSel.value=sig;fill();vSel.value=svc;const m=document.getElementById('mint');m.scrollIntoView({behavior:'smooth',block:'center'});m.classList.add('flash');setTimeout(function(){m.classList.remove('flash');},1500);};
+let picked=null;
 function set(f){if(!f)return;picked=f;nm.textContent='📄 '+f.name;go.disabled=false;out.className='out';}
 file.onchange=e=>set(e.target.files[0]);drop.ondragover=e=>{e.preventDefault();drop.classList.add('over');};drop.ondragleave=()=>drop.classList.remove('over');drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');set(e.dataTransfer.files[0]);};
 go.onclick=async()=>{if(!picked)return;go.disabled=true;go.textContent='Building…';const text=await picked.text();
