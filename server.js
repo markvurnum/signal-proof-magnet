@@ -207,6 +207,16 @@ Return ONLY a JSON array of ${pool.length} objects, in the same order: [{"compan
   return pr;
 }
 
+// The recipient's real first name from their post (for the email greeting) —
+// never the company. Falls back to the company's first word, then 'there'.
+function greetName(name) {
+  const n = String(name || '').trim();
+  if (!n) return 'there';
+  const t = n.split(/[\s.\-–]+/).filter((w) => w.length >= 2 && !/^(the|and|dr|mr|mrs|ms)$/i.test(w));
+  const first = (t[0] || '').replace(/[^A-Za-z]/g, '');
+  return first.length >= 2 ? first : 'there';
+}
+
 // ── PER-PROSPECT: clone the shared base and write the 3 emails in their voice
 // (one batched Haiku call). Cached per token so a second open is instant.
 const cardsCache = new Map(); // token/key -> { cards, exp }
@@ -224,11 +234,12 @@ async function buildProspectCards(ctx) {
   await Promise.all(cards.map(async (c) => {
     try {
       const company = (c._intel && c._intel.company) || c.name || 'the company';
-      const prompt = `Write ONE short cold email FROM ${ctx.from ? ctx.from + ' at ' : ''}${ctx.to} (${SVC.senderDesc}) TO ${company}${SIG.emailAbout(c._intel)}.
+      const greet = greetName(c.name); // the person who posted — NOT the company
+      const prompt = `Write ONE short cold email FROM ${ctx.from ? ctx.from + ' at ' : ''}${ctx.to} (${SVC.senderDesc}) TO ${greet} at ${company}${SIG.emailAbout(c._intel)}.
 
 POST: """${(c.post_text || '').slice(0, 400)}"""
 
-Rules: start "Hi <recipient's first name, or 'there' if a company account>,"; 3 to 4 short sentences; max 70 words; ${SVC.emailRefAsk}; end on ONE soft question; British English; NO em or en dashes; no buzzwords; do NOT write a signature.
+Rules: the FIRST line must be EXACTLY "Hi ${greet}," — use that name verbatim, never greet with the company name; 3 to 4 short sentences; max 70 words; ${SVC.emailRefAsk}; end on ONE soft question; British English; NO em or en dashes; no buzzwords; do NOT write a signature.
 
 Return ONLY JSON: {"subject":<6 words max, personal>,"body":<email body with \\n line breaks>}`;
       const raw = await haiku(prompt, 320, MODEL);
@@ -400,7 +411,7 @@ function shellPage(ctx, cardCount) {
     <h2 class="bookhead">Great${ctx.firstName ? ', ' + esc(ctx.firstName) : ''}!</h2>
     <p class="booksub">To find out how this would apply specifically to your business, let's have a quick 15-minute chat. Grab a time with one of our team below. We look forward to speaking.</p>
     <div id="cal-embed" class="cal-embed">
-      <iframe src="https://link.prospectconnect.io/widget/booking/ruVhcht8ikeLm4EHanpd?full_name=${encodeURIComponent(`${ctx.firstName || ''} ${ctx.lastName || ''}`.trim())}&first_name=${encodeURIComponent(ctx.firstName || '')}&last_name=${encodeURIComponent(ctx.lastName || '')}&email=${encodeURIComponent(ctx.email || '')}&company=${encodeURIComponent(ctx.to || '')}&company_name=${encodeURIComponent(ctx.to || '')}" style="width:100%;border:none;overflow:hidden;min-height:720px" scrolling="no" id="ruVhcht8ikeLm4EHanpd_pm"></iframe>
+      <iframe src="https://link.prospectconnect.io/widget/booking/ruVhcht8ikeLm4EHanpd?name=${encodeURIComponent(`${ctx.firstName || ''} ${ctx.lastName || ''}`.trim())}&full_name=${encodeURIComponent(`${ctx.firstName || ''} ${ctx.lastName || ''}`.trim())}&first_name=${encodeURIComponent(ctx.firstName || '')}&last_name=${encodeURIComponent(ctx.lastName || '')}&email=${encodeURIComponent(ctx.email || '')}&company=${encodeURIComponent(ctx.to || '')}&company_name=${encodeURIComponent(ctx.to || '')}" style="width:100%;border:none;overflow:hidden;min-height:720px" scrolling="no" id="ruVhcht8ikeLm4EHanpd_pm"></iframe>
     </div>
   </div>
   <div class="sitefooter">
