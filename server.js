@@ -124,19 +124,42 @@ function isCompanyPost(c) {
   const tokens = n.split(/\s+/).filter(Boolean);
   return tokens.length < 2 || tokens.length > 4;
 }
-// Findymail: real decision-maker at a domain → { name, linkedinUrl, jobTitle }. Cached.
-async function findymailEmployee(domain) {
-  if (!FINDYMAIL_KEY || !domain) return null;
-  if (empCache.has(domain)) return empCache.get(domain);
-  const body = JSON.stringify({ website: domain, job_titles: ['owner', 'director', 'managing director', 'founder', 'ceo', 'operations director', 'general manager', 'partner'], count: 1 });
-  try {
-    const out = await req({ host: 'app.findymail.com', path: '/api/search/employees', method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json', 'content-length': Buffer.byteLength(body), Authorization: `Bearer ${FINDYMAIL_KEY}` } }, body);
-    const arr = JSON.parse(out);
-    const c = (Array.isArray(arr) && arr[0] && arr[0].name) ? { name: arr[0].name, linkedinUrl: arr[0].linkedinUrl || null, jobTitle: arr[0].jobTitle || null } : null;
-    empCache.set(domain, c); saveEmp();
-    return c;
-  } catch (e) { empCache.set(domain, null); saveEmp(); return null; }
+const fmPost = (fmpath, obj) => {
+  const body = JSON.stringify(obj);
+  return req({ host: 'app.findymail.com', path: fmpath, method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'content-length': Buffer.byteLength(body), Authorization: `Bearer ${FINDYMAIL_KEY}` } }, body);
+};
+const DECISION_TITLES = ['owner', 'director', 'managing director', 'founder', 'ceo', 'operations director', 'general manager', 'partner', 'co-founder', 'president'];
+const BROAD_TITLES = ['head of marketing', 'marketing director', 'marketing manager', 'account director', 'sales director', 'commercial director', 'principal', 'manager', 'lead', 'head'];
+// Findymail: real decision-maker for a company → { name, linkedinUrl, jobTitle, domain }.
+// Resolves the REAL domain from the company name first (our slug guess is often
+// wrong, e.g. activewinmarketing.co.uk -> activewin.co.uk), then a 2-pass title
+// search. Always returns at least the corrected domain. Cached by company.
+async function findymailEmployee(companyName, knownDomain) {
+  if (!FINDYMAIL_KEY) return knownDomain ? { domain: knownDomain } : null;
+  const ck = 'ct:' + ((companyName || knownDomain || '').toLowerCase());
+  if (empCache.has(ck)) return empCache.get(ck);
+  const tryDomain = async (domain) => {
+    for (const titles of [DECISION_TITLES, BROAD_TITLES]) {
+      try {
+        const arr = JSON.parse(await fmPost('/api/search/employees', { website: domain, job_titles: titles, count: 1 }));
+        if (Array.isArray(arr) && arr[0] && arr[0].name) return { name: arr[0].name, linkedinUrl: arr[0].linkedinUrl || null, jobTitle: arr[0].jobTitle || null, domain };
+      } catch (e) {}
+    }
+    return null;
+  };
+  // 1. the post's own domain first (most reliable — avoids name collisions)
+  let result = knownDomain ? await tryDomain(knownDomain) : null;
+  // 2. if nobody there, resolve the company's real domain from its name and try that
+  if (!result && companyName) {
+    let alt = null;
+    try { const j = JSON.parse(await fmPost('/api/search/company', { name: companyName })); if (j && j.domain) alt = j.domain; } catch (e) {}
+    if (alt && alt !== knownDomain) result = await tryDomain(alt);
+    if (!result && alt) result = { domain: alt };
+  }
+  if (!result && knownDomain) result = { domain: knownDomain };
+  empCache.set(ck, result); saveEmp();
+  return result;
 }
 // (Phone enrichment via BetterContact removed for now — too credit-hungry. Email only.)
 
@@ -225,16 +248,18 @@ Return ONLY a JSON array of ${pool.length} objects, in the same order: [{"compan
         if (lookups < 10) { email = await findymailLookup(c.linkedin_url, c.name, c.company || (c._intel && c._intel.company)); lookups++; }
         if (email) { c._foundEmail = email; picked.push(c); continue; }
         const dom = illustrativeDomain(c);
-        // Company-page post → no individual; find a real decision-maker at the domain.
-        if (dom && isCompanyPost(c) && lookups < 9) {
-          const contact = await findymailEmployee(dom); lookups++;
+        // Company-page post → no individual; find a real decision-maker (also fixes the domain).
+        if (isCompanyPost(c) && lookups < 8) {
+          const contact = await findymailEmployee(c.company || (c._intel && c._intel.company) || c.name, dom); lookups += 1;
+          const realDom = (contact && contact.domain) || dom;
           if (contact && contact.name) {
             c._contactName = contact.name; c._contactTitle = contact.jobTitle;
             let cemail = null;
             if (contact.linkedinUrl && lookups < 10) { cemail = await findymailLookup(contact.linkedinUrl, contact.name, c.company); lookups++; }
-            if (cemail) c._foundEmail = cemail; else c._illustrativeEmail = `${illustrativeLocal(contact.name)}@${dom}`;
+            if (cemail) c._foundEmail = cemail; else c._illustrativeEmail = `${illustrativeLocal(contact.name)}@${realDom}`;
             picked.push(c); continue;
           }
+          if (realDom) { c._illustrativeEmail = `info@${realDom}`; picked.push(c); continue; } // no person found: relevant generic email on the correct domain
         }
         if (dom) { c._illustrativeEmail = `${illustrativeLocal(c.name)}@${dom}`; picked.push(c); }
       }
