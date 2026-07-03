@@ -4,6 +4,7 @@ node_modules/
 # runtime data / PII — never commit
 prospects.json
 emails.json
+employees.json
 *.log
 magnet_out.html
 

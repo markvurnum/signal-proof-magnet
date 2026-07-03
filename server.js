@@ -51,6 +51,11 @@ const PROSPECTS = (() => { try { return JSON.parse(fs.readFileSync(path.join(__d
 const EMAIL_FILE = path.join(__dirname, 'emails.json');
 (() => { try { const o = JSON.parse(fs.readFileSync(EMAIL_FILE, 'utf8')); for (const k in o) emailCache.set(k, o[k]); } catch (e) {} })();
 function saveEmails() { try { fs.writeFileSync(EMAIL_FILE, JSON.stringify(Object.fromEntries(emailCache))); } catch (e) {} }
+// Decision-maker (employee) lookups cached by domain, so we never re-charge.
+const EMP_FILE = path.join(__dirname, 'employees.json');
+const empCache = new Map();
+(() => { try { const o = JSON.parse(fs.readFileSync(EMP_FILE, 'utf8')); for (const k in o) empCache.set(k, o[k]); } catch (e) {} })();
+function saveEmp() { try { fs.writeFileSync(EMP_FILE, JSON.stringify(Object.fromEntries(empCache))); } catch (e) {} }
 
 // ── tiny https helpers ────────────────────────────────────────────────
 function req(opts, body) {
@@ -109,6 +114,29 @@ async function findymailLookup(linkedinUrl, name, company) {
     emailCache.set(key, email); saveEmails(); // persist so this lead is never re-looked-up (incl. null = no-match)
     return email;
   } catch (e) { emailCache.set(key, null); saveEmails(); return null; }
+}
+// A post is from a COMPANY PAGE (not a person) — so there's no individual name.
+// For these we look up a real decision-maker at the domain instead.
+function isCompanyPost(c) {
+  if (/\/company\//i.test(c.linkedin_url || '')) return true;
+  const n = (c.name || '').trim();
+  if (/\b(ltd|limited|llp|plc|group|solutions|services|aggregates|marketing|software|systems|recruitment|company|associates|academy|bureau|geotechnical|environmental|consult|holdings|partners)\b/i.test(n)) return true;
+  const tokens = n.split(/\s+/).filter(Boolean);
+  return tokens.length < 2 || tokens.length > 4;
+}
+// Findymail: real decision-maker at a domain → { name, linkedinUrl, jobTitle }. Cached.
+async function findymailEmployee(domain) {
+  if (!FINDYMAIL_KEY || !domain) return null;
+  if (empCache.has(domain)) return empCache.get(domain);
+  const body = JSON.stringify({ website: domain, job_titles: ['owner', 'director', 'managing director', 'founder', 'ceo', 'operations director', 'general manager', 'partner'], count: 1 });
+  try {
+    const out = await req({ host: 'app.findymail.com', path: '/api/search/employees', method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', 'content-length': Buffer.byteLength(body), Authorization: `Bearer ${FINDYMAIL_KEY}` } }, body);
+    const arr = JSON.parse(out);
+    const c = (Array.isArray(arr) && arr[0] && arr[0].name) ? { name: arr[0].name, linkedinUrl: arr[0].linkedinUrl || null, jobTitle: arr[0].jobTitle || null } : null;
+    empCache.set(domain, c); saveEmp();
+    return c;
+  } catch (e) { empCache.set(domain, null); saveEmp(); return null; }
 }
 // (Phone enrichment via BetterContact removed for now — too credit-hungry. Email only.)
 
@@ -197,6 +225,17 @@ Return ONLY a JSON array of ${pool.length} objects, in the same order: [{"compan
         if (lookups < 10) { email = await findymailLookup(c.linkedin_url, c.name, c.company || (c._intel && c._intel.company)); lookups++; }
         if (email) { c._foundEmail = email; picked.push(c); continue; }
         const dom = illustrativeDomain(c);
+        // Company-page post → no individual; find a real decision-maker at the domain.
+        if (dom && isCompanyPost(c) && lookups < 9) {
+          const contact = await findymailEmployee(dom); lookups++;
+          if (contact && contact.name) {
+            c._contactName = contact.name; c._contactTitle = contact.jobTitle;
+            let cemail = null;
+            if (contact.linkedinUrl && lookups < 10) { cemail = await findymailLookup(contact.linkedinUrl, contact.name, c.company); lookups++; }
+            if (cemail) c._foundEmail = cemail; else c._illustrativeEmail = `${illustrativeLocal(contact.name)}@${dom}`;
+            picked.push(c); continue;
+          }
+        }
         if (dom) { c._illustrativeEmail = `${illustrativeLocal(c.name)}@${dom}`; picked.push(c); }
       }
       baseCache.set(sigKey, { cards: picked, exp: Date.now() + 60 * 60000 }); // refresh hourly
@@ -234,7 +273,7 @@ async function buildProspectCards(ctx) {
   await Promise.all(cards.map(async (c) => {
     try {
       const company = (c._intel && c._intel.company) || c.name || 'the company';
-      const greet = greetName(c.name); // the person who posted — NOT the company
+      const greet = greetName(c._contactName || c.name); // real contact (or poster) — NOT the company
       const prompt = `Write ONE short cold email FROM ${ctx.from ? ctx.from + ' at ' : ''}${ctx.to} (${SVC.senderDesc}) TO ${greet} at ${company}${SIG.emailAbout(c._intel)}.
 
 POST: """${(c.post_text || '').slice(0, 400)}"""
@@ -273,7 +312,7 @@ function cardsFragment(cards, ctx) {
         const i = c._intel || {};
         const domain = (c._foundEmail && c._foundEmail.split('@')[1]) || i.website || (c._illustrativeEmail && c._illustrativeEmail.split('@')[1]) || null;
         const sig = SIG.signalRow(i);
-        const rows = [['Company', i.company], ...(sig ? [sig] : []), ['Location', i.location || c.location], ['Industry', i.industry], ['Company size', i.company_size]];
+        const rows = [['Company', i.company], ...(sig ? [sig] : []), ...(c._contactName ? [['Contact', c._contactName + (c._contactTitle ? ' · ' + c._contactTitle : '')]] : []), ['Location', i.location || c.location], ['Industry', i.industry], ['Company size', i.company_size]];
         let cells = rows.filter(([, v]) => v).map(([k, v]) => `<div class="ic"><span>${k}</span>${esc(String(v))}</div>`).join('');
         if (domain) cells += `<div class="ic"><span>Website</span><a href="https://${esc(domain.replace(/^https?:\/\//, ''))}" target="_blank" rel="noopener">${esc(domain.replace(/^https?:\/\//, ''))}</a></div>`;
         if (c.linkedin_url) cells += `<div class="ic"><span>LinkedIn</span><a href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">View profile</a></div>`;
