@@ -378,13 +378,8 @@ function shellPage(ctx, cardCount) {
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
   :root{--bg:#000;--panel:#0c0b09;--panel2:#121110;--line:rgba(201,168,76,.30);--gold:#c9a84c;--txt:#fff;--mut:#9b958a;--quote:#e9e4d8}
-  [data-theme=light]{--bg:#f4f1ea;--panel:#fff;--panel2:#faf7f0;--line:rgba(160,125,30,.32);--gold:#9c7d1e;--txt:#1b1710;--mut:#6f695e;--quote:#2b2620}
-  [data-theme=light] .brand{border-bottom-color:rgba(0,0,0,.12)}
-  [data-theme=light] .who,[data-theme=light] .story .stat,[data-theme=light] .sub b,[data-theme=light] h1{color:#1b1710}
-  [data-theme=light] .stories,[data-theme=light] .booking,[data-theme=light] .sitefooter{border-top-color:rgba(0,0,0,.12)}
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.55 Inter,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-  .themebtn{position:fixed;top:14px;right:14px;z-index:20;width:38px;height:38px;border-radius:9px;background:var(--panel2);border:1px solid var(--line);color:var(--gold);font-size:16px;cursor:pointer;line-height:1}
   .wrap{width:80%;max-width:960px;margin:0 auto;padding:40px 20px 90px}
   @media(max-width:760px){.wrap{width:92%;padding:28px 16px 70px}}
   .brand{display:flex;align-items:center;gap:16px;font-size:13.5px;line-height:1.5;color:var(--mut);border-bottom:1px solid rgba(255,255,255,.12);padding-bottom:16px;margin-bottom:28px}
@@ -445,7 +440,7 @@ function shellPage(ctx, cardCount) {
   .email .ehead b{color:#1a1a1a;font-weight:600;margin-right:4px}
   .email .esubj{padding:14px 18px 4px;font-weight:700;font-size:16px;color:#111}
   .email .ebody{padding:4px 18px 18px;white-space:normal}
-</style></head><body><button id="themebtn" class="themebtn" onclick="toggleTheme()" title="Light / dark">🌙</button><div class="wrap">
+</style></head><body><div class="wrap">
   <div class="brand"><img class="logo" src="/assets/ProspectMachine_Logo_Black.jpg" alt="Prospect Machine" onerror="this.style.display='none'"><span>${subHeader}</span></div>
   <h1>${ctx.firstName ? esc(ctx.firstName) + ', the ' : 'The '}<span class="hl">right clients</span> are already looking for you.</h1>
   <p class="sub">Here ${cardCount === 1 ? 'is' : 'are'} <b>${cardCount} UK ${cardCount === 1 ? 'business' : 'businesses'}</b> who signalled in the last ${SIG.freshDays} days that they need exactly what you do: ${signalLine}, right now.</p>
@@ -490,9 +485,6 @@ function shellPage(ctx, cardCount) {
 <script>
   window.__prospect = { firstName: ${JSON.stringify(ctx.firstName || '')}, lastName: ${JSON.stringify(ctx.lastName || '')}, email: ${JSON.stringify(ctx.email || '')} };
   function sendBook(){ var b=document.getElementById('booking'); b.style.display='block'; b.scrollIntoView({behavior:'smooth',block:'start'}); }
-  function toggleTheme(){ setTheme(document.documentElement.getAttribute('data-theme')==='light'?'dark':'light'); }
-  function setTheme(t){ document.documentElement.setAttribute('data-theme',t); try{localStorage.setItem('sp-theme',t);}catch(e){} var b=document.getElementById('themebtn'); if(b) b.textContent = t==='light'?'☀️':'🌙'; }
-  (function(){ var t='dark'; try{ t=localStorage.getItem('sp-theme')||'dark'; }catch(e){} setTheme(t); })();
   (function(){
     var msgs=${JSON.stringify(loaderMsgs)};
     var el=document.querySelector('.loadmsg'), i=0;
@@ -549,28 +541,28 @@ function consolePage(counts) {
   }).join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signal Proof — Console</title>
 <style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-:root{--gold:#c9a84c;--panel:#121110;--line:rgba(201,168,76,.28);--mut:#9b958a}*{box-sizing:border-box}
-body{margin:0;background:#0b0a09;color:#eee;font:15px/1.5 Inter,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 20px 70px}
+:root{--gold:#9c7d1e;--panel:#ffffff;--line:rgba(160,125,30,.30);--mut:#6f695e}*{box-sizing:border-box}
+body{margin:0;background:#f4f1ea;color:#1b1710;font:15px/1.5 Inter,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 20px 70px}
 .wrap{max-width:1000px;margin:0 auto}h1{font-size:26px;margin:0 0 4px}h2{font-size:17px;color:var(--gold);margin:34px 0 14px;letter-spacing:.02em}
 .lede{color:var(--mut);margin:0 0 8px;font-size:14px}
-.sig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+.sig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
 .sighead{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;margin-bottom:14px;flex-wrap:wrap}
-.signame{font-size:18px;font-weight:700;color:#fff}.sigsub{color:var(--mut);font-size:12px;margin-top:2px}.sigsub code{color:#d8c98f}
+.signame{font-size:18px;font-weight:700;color:#1b1710}.sigsub{color:var(--mut);font-size:12px;margin-top:2px}.sigsub code{color:#9c7d1e}
 .pool{color:var(--gold);font-size:13px;text-align:right}.pool b{font-size:24px;margin-right:5px}.poolsub{color:var(--mut);font-size:11px;margin-top:1px}
 .svcgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:11px}
-.svc{display:block;text-decoration:none;background:#0e0d0c;border:1px solid var(--line);border-radius:10px;padding:13px;transition:.15s}
-.svc:hover{border-color:var(--gold);background:rgba(201,168,76,.06)}
-.svcname{color:var(--gold);font-weight:700;font-size:14px;margin-bottom:3px}.svcaud{color:#efeadd;font-size:12px;margin-bottom:7px}.svcneed{color:var(--mut);font-size:11.5px;font-style:italic}
+.svc{display:block;text-decoration:none;background:#faf7f0;border:1px solid var(--line);border-radius:10px;padding:13px;transition:.15s}
+.svc:hover{border-color:var(--gold);background:rgba(160,125,30,.08)}
+.svcname{color:var(--gold);font-weight:700;font-size:14px;margin-bottom:3px}.svcaud{color:#3a352c;font-size:12px;margin-bottom:7px}.svcneed{color:var(--mut);font-size:11.5px;font-style:italic}
 .svcacts{margin-top:9px;font-size:11.5px}.svcacts a{color:var(--gold);text-decoration:none}.svcacts a:hover{text-decoration:underline}
-.mint.flash{border-color:var(--gold);box-shadow:0 0 0 2px rgba(201,168,76,.25)}
-.mint{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.mint.flash{border-color:var(--gold);box-shadow:0 0 0 2px rgba(160,125,30,.25)}
+.mint{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
 .row{display:flex;gap:12px;margin-bottom:14px}.row label{flex:1;font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--gold)}
-select{width:100%;margin-top:6px;padding:11px;background:#0e0d0c;color:#efeadd;border:1px solid var(--line);border-radius:9px;font-size:14px}
-.drop{display:block;border:2px dashed rgba(201,168,76,.4);border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;background:#0e0d0c}.drop.over{border-color:var(--gold)}.drop b{color:var(--gold)}#file{display:none}
-.nm{margin-top:12px;font-size:13px;color:#efeadd}
-button{margin-top:16px;width:100%;padding:13px;font-size:15px;font-weight:700;background:var(--gold);color:#000;border:0;border-radius:9px;cursor:pointer}button:disabled{opacity:.45}
-.out{margin-top:18px;padding:15px;border-radius:10px;background:#0e0d0c;border:1px solid var(--line);display:none}.out.show{display:block}.out b{color:var(--gold)}.dl{display:inline-block;margin-top:10px;background:var(--gold);color:#000;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px}.err{color:#ef8a8a}
-code{background:#1a1917;padding:2px 6px;border-radius:5px;color:#d8c98f;font-size:12.5px}.hint{margin-top:14px;font-size:12px;color:#6b665d}</style></head>
+select{width:100%;margin-top:6px;padding:11px;background:#fff;color:#1b1710;border:1px solid var(--line);border-radius:9px;font-size:14px}
+.drop{display:block;border:2px dashed rgba(160,125,30,.4);border-radius:12px;padding:28px 20px;text-align:center;cursor:pointer;background:#faf7f0}.drop.over{border-color:var(--gold)}.drop b{color:var(--gold)}#file{display:none}
+.nm{margin-top:12px;font-size:13px;color:#3a352c}
+button{margin-top:16px;width:100%;padding:13px;font-size:15px;font-weight:700;background:var(--gold);color:#fff;border:0;border-radius:9px;cursor:pointer}button:disabled{opacity:.45}
+.out{margin-top:18px;padding:15px;border-radius:10px;background:#faf7f0;border:1px solid var(--line);display:none}.out.show{display:block}.out b{color:var(--gold)}.dl{display:inline-block;margin-top:10px;background:var(--gold);color:#fff;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px}.err{color:#c0392b}
+code{background:#efe7d3;padding:2px 6px;border-radius:5px;color:#7a5f12;font-size:12.5px}.hint{margin-top:14px;font-size:12px;color:#8a857a}</style></head>
 <body><div class="wrap">
 <h1>Signal Proof — Console</h1>
 <p class="lede">Your live markets (signals) and the services running off each. Click any service to preview its page.</p>
