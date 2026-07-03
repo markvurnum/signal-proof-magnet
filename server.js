@@ -542,7 +542,7 @@ function consolePage(counts) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signal Proof — Console</title>
 <style>@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 :root{--gold:#9c7d1e;--panel:#ffffff;--line:rgba(160,125,30,.30);--mut:#6f695e}*{box-sizing:border-box}
-body{margin:0;background:#f4f1ea;color:#1b1710;font:15px/1.5 Inter,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 20px 70px}
+body{margin:0;background:#ffffff;color:#1b1710;font:15px/1.5 Inter,-apple-system,Segoe UI,Roboto,sans-serif;padding:32px 20px 70px}
 .wrap{max-width:1000px;margin:0 auto}h1{font-size:26px;margin:0 0 4px}h2{font-size:17px;color:var(--gold);margin:34px 0 14px;letter-spacing:.02em}
 .lede{color:var(--mut);margin:0 0 8px;font-size:14px}
 .sig{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
