@@ -443,7 +443,7 @@ function shellPage(ctx, cardCount) {
 </style></head><body><div class="wrap">
   <div class="brand"><img class="logo" src="/assets/ProspectMachine_Logo_Black.jpg" alt="Prospect Machine" onerror="this.style.display='none'"><span>${subHeader}</span></div>
   <h1>${ctx.firstName ? esc(ctx.firstName) + ', the ' : 'The '}<span class="hl">right clients</span> are already looking for you.</h1>
-  <p class="sub">Here ${cardCount === 1 ? 'is' : 'are'} <b>${cardCount} UK ${cardCount === 1 ? 'business' : 'businesses'}</b> who signalled in the last ${SIG.freshDays} days that they need exactly what you do: ${signalLine}, right now.</p>
+  <p class="sub">Here ${cardCount === 1 ? 'is' : 'are'} <b>${cardCount} ${SIG.audienceNoun ? esc(cardCount === 1 ? SIG.audienceNoun.one : SIG.audienceNoun.many) : 'UK ' + (cardCount === 1 ? 'business' : 'businesses')}</b> who signalled in the last ${SIG.freshDays} days that they need exactly what you do: ${signalLine}, right now.</p>
   <p class="sub">We'd take care of finding these people, writing and sending the emails, and following up, so enquiries of this quality land in your inbox every single week. You always have people ready to speak to you who need your services right now. No ads, no chasing.</p>
   <div id="cards"><div class="loadwrap"><div class="spin"></div><div class="loadmsg">Sourcing your exact ideal clients…</div></div></div>
   <div class="stories">
