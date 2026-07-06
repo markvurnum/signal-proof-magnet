@@ -99,7 +99,7 @@ function transform(csvText, baseUrl = DEFAULT_BASE, opts = {}) {
     let company = pick(row, ['company', 'companyname', 'organization', 'organisation', 'business', 'account']);
     if (!company && domain) company = titleize(domain.split('.')[0]);
 
-    const hash = crypto.createHash('sha1').update(email).digest('hex').slice(0, 5);
+    const hash = crypto.createHash('sha1').update(email).digest('hex').slice(0, 10);
     const slugBase = (company ? company : domain.split('.')[0] || 'lead').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const token = `${slugBase}-${hash}`;
 
@@ -132,7 +132,13 @@ function upsertChunk(chunk) {
 async function buildLinks(csvText, opts = {}) {
   if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error('Missing Supabase creds in the twin .env.');
   const out = transform(csvText, opts.baseUrl || DEFAULT_BASE, { signal: opts.signal, service: opts.service });
-  for (let i = 0; i < out.records.length; i += 500) await upsertChunk(out.records.slice(i, i + 500));
+  // Dedupe by token before upserting: a list can contain the same email/lead
+  // twice, and a Postgres upsert (ON CONFLICT DO UPDATE) rejects a batch that
+  // carries the same key twice. The output CSV still keeps every row (same lead
+  // → same stable link), we just don't write the same token to the DB twice.
+  const seen = new Set();
+  const unique = out.records.filter((r) => (seen.has(r.token) ? false : seen.add(r.token)));
+  for (let i = 0; i < unique.length; i += 500) await upsertChunk(unique.slice(i, i + 500));
   return out;
 }
 
