@@ -37,6 +37,12 @@ const officeServices = (stage) => {
       emailRefAsk: soon
         ? 'reference their SPECIFIC company and their upcoming move; offer to arrange premises, contents and liability cover ready for the new premises'
         : 'reference their SPECIFIC company and their recent move; offer to review and arrange the right cover for their new premises' },
+    fitout: { label: 'Fit-out / interiors', audience: 'office fit-out and interiors companies',
+      needTail: soon ? 'the new space designed and fitted out for move-in' : 'the new space fitted out and furnished',
+      senderDesc: 'an office fit-out and interiors business that designs, fits out and furnishes new premises',
+      emailRefAsk: soon
+        ? 'reference their SPECIFIC company and upcoming move; offer to design and fit out the new space so it is ready for move-in'
+        : 'reference their SPECIFIC company and recent move; offer to fit out and furnish the new space properly' },
   };
 };
 
@@ -53,6 +59,18 @@ const SIGNALS = {
     defaultService: 'coaching',
     services: {
       coaching: { label: 'Sales coaching / training', audience: 'coaches, consultants and service-based business owners', needTail: '', senderDesc: 'a sales coaching and training business that helps companies ramp and train new sales hires so they hit quota faster', emailRefAsk: 'reference their SPECIFIC role and company; offer to help their new hire(s) ramp and hit quota faster' },
+      recruitment: { label: 'Sales recruitment', audience: 'sales recruiters',
+        needTail: 'the salespeople to hit the number',
+        senderDesc: 'a sales recruitment business that helps companies hire strong salespeople as they scale the team',
+        emailRefAsk: 'reference their SPECIFIC role and company; offer to help hire the salespeople to scale the team' },
+      revops: { label: 'CRM / RevOps', audience: 'CRM and RevOps consultants',
+        needTail: 'the CRM and pipeline set up for a bigger team',
+        senderDesc: 'a CRM and RevOps consultancy that sets up the systems, pipeline and reporting a growing sales team needs',
+        emailRefAsk: 'reference their SPECIFIC company and sales growth; offer to set up the CRM, pipeline and reporting for the bigger team' },
+      marketing: { label: 'Marketing / demand', audience: 'B2B marketing agencies',
+        needTail: 'pipeline for the new reps to work',
+        senderDesc: 'a B2B marketing agency that generates the pipeline a growing sales team needs to hit quota',
+        emailRefAsk: 'reference their SPECIFIC company and sales growth; offer to generate pipeline for the new reps to work' },
     },
   },
 
@@ -113,6 +131,10 @@ const SIGNALS = {
         needTail: 'to make the most of the announcement',
         senderDesc: 'a PR agency that helps funded companies amplify their raise and build profile',
         emailRefAsk: 'reference their SPECIFIC company and recent raise; offer PR to amplify the funding news and build ongoing profile' },
+      rdtax: { label: 'R&D tax', audience: 'R&D tax specialists',
+        needTail: 'to claim R&D tax on the work the funding backs',
+        senderDesc: 'an R&D tax consultancy that helps funded companies claim R&D relief on the innovation the raise pays for',
+        emailRefAsk: 'reference their SPECIFIC company and recent raise; offer R&D tax help to claim relief on the innovation the funding backs' },
     },
   },
 
@@ -139,6 +161,10 @@ const SIGNALS = {
         needTail: 'to press the momentum',
         senderDesc: 'a marketing agency that helps companies capitalise on the momentum from a strong result',
         emailRefAsk: 'reference their SPECIFIC company and milestone; offer marketing to press the momentum from a record period' },
+      content: { label: 'Content / production', audience: 'content and video production studios',
+        needTail: 'the moment captured as content',
+        senderDesc: 'a content and video production studio that turns a milestone into case studies, video and social proof',
+        emailRefAsk: 'reference their SPECIFIC milestone; offer content and video to capture the moment as case studies and social proof' },
     },
   },
 
@@ -169,6 +195,10 @@ const SIGNALS = {
         needTail: 'traffic to the new site fast',
         senderDesc: 'a paid ads agency that drives immediate traffic to a newly launched site or brand',
         emailRefAsk: 'reference their SPECIFIC company and launch/rebrand; offer paid ads to drive traffic to the new site straight away' },
+      pr: { label: 'PR', audience: 'PR and communications agencies',
+        needTail: 'the new brand announced well',
+        senderDesc: 'a PR agency that announces a rebrand or launch to press, customers and the market',
+        emailRefAsk: 'reference their SPECIFIC rebrand or launch; offer PR to announce it to press, customers and the market' },
     },
   },
 
@@ -197,6 +227,14 @@ const SIGNALS = {
         needTail: 'to launch marketing in the new market',
         senderDesc: 'a marketing agency that helps companies launch and localise their marketing when they expand into a new market',
         emailRefAsk: 'reference their SPECIFIC company and expansion; offer marketing to launch and localise in the new market' },
+      cfo: { label: 'International tax / CFO', audience: 'international tax and finance advisers',
+        needTail: 'the cross-border finance and tax handled',
+        senderDesc: 'an international finance and tax advisory that sets up cross-border accounting, tax and reporting when a company expands into a new market',
+        emailRefAsk: 'reference their SPECIFIC company and expansion; offer international finance and tax help (entity accounting, cross-border tax, reporting)' },
+      ops: { label: 'Logistics / ops', audience: 'logistics and operations providers',
+        needTail: 'the operations and supply chain set up in-market',
+        senderDesc: 'a logistics and operations provider that sets up supply chain, fulfilment and operations in a new market',
+        emailRefAsk: 'reference their SPECIFIC company and expansion; offer logistics and ops help to set up supply chain and fulfilment in the new market' },
     },
   },
 
@@ -227,6 +265,14 @@ const SIGNALS = {
         needTail: 'to make the most of the win',
         senderDesc: 'a marketing agency that helps companies amplify a major contract win and attract more work like it',
         emailRefAsk: 'reference their SPECIFIC contract win; offer marketing to amplify it and win more work like it' },
+      cashflow: { label: 'Invoice finance / cashflow', audience: 'invoice finance and cashflow lenders',
+        needTail: 'the cashflow to fund delivery',
+        senderDesc: 'an invoice finance provider that funds the cashflow gap while a company delivers a big new contract',
+        emailRefAsk: 'reference their SPECIFIC contract win; offer invoice finance to fund the cashflow while they deliver' },
+      insurance: { label: 'Insurance / H&S', audience: 'commercial insurance and health-and-safety consultants',
+        needTail: 'the cover and compliance for the work',
+        senderDesc: 'a commercial insurance and health-and-safety business that arranges the cover and compliance a big contract requires',
+        emailRefAsk: 'reference their SPECIFIC contract win; offer insurance and H&S to cover the new work and meet the client compliance' },
     },
   },
 
@@ -253,6 +299,10 @@ const SIGNALS = {
         needTail: 'to make the impact real and reported',
         senderDesc: 'a sustainability and ESG consultancy that helps certified companies measure, improve and report their impact',
         emailRefAsk: 'reference their SPECIFIC company and certification; offer sustainability and ESG help to measure, improve and report their impact' },
+      pr: { label: 'Impact PR / marketing', audience: 'PR and marketing agencies',
+        needTail: 'the certification turned into profile',
+        senderDesc: 'a PR and marketing agency that turns a B Corp or ISO certification into brand profile and new business',
+        emailRefAsk: 'reference their SPECIFIC certification; offer PR and marketing to turn it into profile and new business' },
     },
   },
 
@@ -280,6 +330,10 @@ const SIGNALS = {
         needTail: 'it produced and edited to a high standard',
         senderDesc: 'a podcast and video production studio that records, edits and repurposes a show or talks into clips and content',
         emailRefAsk: 'reference their SPECIFIC podcast or talk; offer production help to record, edit and repurpose it into clips and content' },
+      web: { label: 'Web / media kit', audience: 'web designers and personal-brand studios',
+        needTail: 'a site and media kit to match the profile',
+        senderDesc: 'a web design studio that builds the personal-brand website and media kit behind a founder raising their profile',
+        emailRefAsk: 'reference their SPECIFIC podcast, book or talk; offer to build the personal-brand website and media kit to match' },
     },
   },
 
@@ -310,6 +364,10 @@ const SIGNALS = {
         needTail: 'the systems and operations merged',
         senderDesc: 'an operations consultancy that integrates the systems, processes and operations of an acquired business',
         emailRefAsk: 'reference their SPECIFIC acquisition; offer help to integrate the systems, processes and operations' },
+      cfo: { label: 'Financial integration / CFO', audience: 'fractional CFOs and finance integrators',
+        needTail: 'the two sets of finances merged',
+        senderDesc: 'a fractional CFO business that consolidates the finances, reporting and systems of two merged companies',
+        emailRefAsk: 'reference their SPECIFIC acquisition; offer fractional CFO help to consolidate the finances, reporting and systems' },
     },
   },
 
@@ -336,6 +394,14 @@ const SIGNALS = {
         needTail: 'to recruit the first franchisees',
         senderDesc: 'a marketing agency that helps franchisors attract and recruit their first franchisees',
         emailRefAsk: 'reference their SPECIFIC franchise launch; offer marketing to attract and recruit their first franchisees' },
+      ops: { label: 'Ops / systems', audience: 'operations consultants',
+        needTail: 'the operations manual and systems built',
+        senderDesc: 'an operations consultancy that builds the operations manual and systems a franchise needs to be repeatable',
+        emailRefAsk: 'reference their SPECIFIC franchise plans; offer to build the operations manual and systems that make it repeatable' },
+      training: { label: 'Training / L&D', audience: 'training and L&D providers',
+        needTail: 'a programme to train new franchisees',
+        senderDesc: 'a training and L&D provider that builds the onboarding and training programme for new franchisees',
+        emailRefAsk: 'reference their SPECIFIC franchise launch; offer to build the training and onboarding programme for new franchisees' },
     },
   },
 
@@ -362,6 +428,10 @@ const SIGNALS = {
         needTail: 'to make the most of the news',
         senderDesc: 'a marketing agency that helps grant-winning companies turn the award into profile and commercial momentum',
         emailRefAsk: 'reference their SPECIFIC grant; offer marketing to turn the award into profile and momentum' },
+      cashflow: { label: 'Match-funding / finance', audience: 'finance and match-funding advisers',
+        needTail: 'the match-funding and cashflow lined up',
+        senderDesc: 'a finance advisory that arranges the match-funding and cashflow a grant-funded project needs',
+        emailRefAsk: 'reference their SPECIFIC grant; offer finance help to arrange the match-funding and cashflow the project needs' },
     },
   },
 
@@ -392,6 +462,10 @@ const SIGNALS = {
         needTail: 'the new premises insured',
         senderDesc: 'a commercial insurance broker that arranges premises, stock and liability cover for a new customer-facing site',
         emailRefAsk: 'reference their SPECIFIC new site; offer to arrange premises, stock and liability cover' },
+      staff: { label: 'Staffing / training', audience: 'hospitality and retail recruiters',
+        needTail: 'a team hired and trained for opening',
+        senderDesc: 'a staffing and training business that hires and trains the team a new retail or hospitality site needs for opening',
+        emailRefAsk: 'reference their SPECIFIC new site; offer to hire and train the team ready for opening day' },
     },
   },
 };
