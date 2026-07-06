@@ -524,6 +524,7 @@ function consolePage(counts) {
   const K = encodeURIComponent(CONSOLE_KEY);
   const sigMap = Object.fromEntries(Object.entries(SIGNALS).map(([sk, s]) => [sk, {
     label: s.label || sk, defaultService: s.defaultService,
+    shown: (counts[sk] || {}).shown, // live cards, so the mint dropdown can flag ready vs warming
     services: Object.entries(s.services).map(([k, v]) => ({ key: k, label: v.label || k })),
   }]));
   const sections = Object.entries(SIGNALS).map(([sk, s]) => {
@@ -579,9 +580,14 @@ ${sections}
 <script>
 const SIG=${JSON.stringify(sigMap)}, KEY=${JSON.stringify(CONSOLE_KEY)};
 const sSel=document.getElementById('signal'),vSel=document.getElementById('service'),file=document.getElementById('file'),drop=document.getElementById('drop'),nm=document.getElementById('nm'),go=document.getElementById('go'),out=document.getElementById('out');
-for(const k in SIG){const o=document.createElement('option');o.value=k;o.textContent=SIG[k].label;sSel.appendChild(o);}
+const gReady=document.createElement('optgroup');gReady.label='● Ready to mint — 3+ live leads';
+const gWarm=document.createElement('optgroup');gWarm.label='○ Warming — under 3, filling weekly';
+let firstReady=null;
+for(const k in SIG){const n=SIG[k].shown;const ready=(n||0)>=3;const o=document.createElement('option');o.value=k;o.textContent=SIG[k].label+(n==null?'':' · '+n+' live');(ready?gReady:gWarm).appendChild(o);if(ready&&!firstReady)firstReady=k;}
+if(gReady.children.length)sSel.appendChild(gReady);
+if(gWarm.children.length)sSel.appendChild(gWarm);
 function fill(){vSel.innerHTML='';const s=SIG[sSel.value];for(const x of s.services){const o=document.createElement('option');o.value=x.key;o.textContent=x.label;vSel.appendChild(o);}vSel.value=s.defaultService;}
-sSel.onchange=fill;if(SIG['office-moved'])sSel.value='office-moved';fill();
+sSel.onchange=fill;sSel.value=firstReady||Object.keys(SIG)[0];fill();
 window.pickMint=function(sig,svc){sSel.value=sig;fill();vSel.value=svc;const m=document.getElementById('mint');m.scrollIntoView({behavior:'smooth',block:'center'});m.classList.add('flash');setTimeout(function(){m.classList.remove('flash');},1500);};
 let picked=null;
 function set(f){if(!f)return;picked=f;nm.textContent='📄 '+f.name;go.disabled=false;out.className='out';}
