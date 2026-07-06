@@ -259,7 +259,7 @@ const SIGNALS = {
   visibility: {
     label: 'Launched a podcast / book',
     clientId: 'd96f8fe7-9a08-4307-92f3-e3dc5d591420', // TEST UK Founders Launching a Podcast or Book
-    freshDays: 45,
+    freshDays: 120,
     intelNoun: 'podcast, book or speaking announcement',
     loaderMoment: 'UK founders raising their profile',
     needLead: "they've just launched a podcast, book or talk and want",
