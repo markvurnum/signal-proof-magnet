@@ -203,7 +203,7 @@ const SIGNALS = {
   contract: {
     label: 'Won a big contract',
     clientId: 'c584fd7d-37ad-4f8e-baa1-d7bcde2e9ba4', // TEST UK Companies That Won a Big Contract
-    freshDays: 45,
+    freshDays: 280, // contract wins have a long delivery tail; individual-poster leads here are older but enrich cleanly
     intelNoun: 'major contract / framework win announcement',
     loaderMoment: 'UK companies winning contracts',
     needLead: "they've just won a major contract and need",
@@ -368,7 +368,7 @@ const SIGNALS = {
   location: {
     label: 'Opening a new store / site',
     clientId: '819ed154-b562-4993-b4c3-eb50f24b8016', // TEST UK Businesses Opening a New Store or Site
-    freshDays: 45,
+    freshDays: 150,
     intelNoun: 'new store / restaurant / site opening',
     loaderMoment: 'UK businesses opening new sites',
     needLead: "they're opening a new customer site and need",
